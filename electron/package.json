@@ -1,0 +1,45 @@
+{
+  "name": "scholar-electron",
+  "version": "1.0.0",
+  "description": "ScholAr Desktop Application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
+    "build": "electron-builder",
+    "build:mac": "electron-builder --mac",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux"
+  },
+  "keywords": ["electron", "scholar", "desktop"],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^37.3.1",
+    "electron-builder": "^26.0.12",
+    "cross-env": "^7.0.3"
+  },
+  "build": {
+    "appId": "com.scholar.app",
+    "productName": "ScholAr",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*",
+      "../frontend/out/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.education",
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "icon": "assets/icon.png"
+    }
+  }
+}

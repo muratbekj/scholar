@@ -66,3 +66,11 @@ coverage/
 
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
+
+# Electron build output
+dist/
+out/
+
+# Temporary files
+*.tmp
+*.temp
