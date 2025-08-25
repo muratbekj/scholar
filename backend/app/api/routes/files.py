@@ -80,6 +80,46 @@ async def get_extracted_text(file_id: str):
         logger.error(f"Error getting extracted text for {file_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@router.get("/{file_id}/chunks")
+async def get_document_chunks(file_id: str):
+    """
+    Get chunks for a document (if it was chunked due to large size)
+    """
+    try:
+        chunks = await document_service.get_document_chunks(file_id)
+        if chunks is None:
+            raise HTTPException(status_code=404, detail="Document chunks not found")
+        return {
+            "file_id": file_id,
+            "chunks": chunks,
+            "total_chunks": len(chunks)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting document chunks for {file_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/{file_id}/chunks/{chunk_id}")
+async def get_chunk_by_id(file_id: str, chunk_id: str):
+    """
+    Get a specific chunk by its ID
+    """
+    try:
+        chunk = await document_service.get_chunk_by_id(file_id, chunk_id)
+        if chunk is None:
+            raise HTTPException(status_code=404, detail="Chunk not found")
+        return {
+            "file_id": file_id,
+            "chunk_id": chunk_id,
+            "chunk": chunk
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting chunk {chunk_id} for file {file_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @router.delete("/{file_id}")
 async def delete_file(file_id: str):
     """
