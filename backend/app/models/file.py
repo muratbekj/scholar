@@ -3,6 +3,13 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
+class RAGProcessingInfo(BaseModel):
+    """Model for RAG processing information"""
+    processing_time_seconds: float
+    chunking: Dict[str, Any]
+    embedding: Dict[str, Any]
+    vector_storage: Dict[str, Any]
+
 class FileUploadResponse(BaseModel):
     message: str
     file_id: str
@@ -10,6 +17,7 @@ class FileUploadResponse(BaseModel):
     size: int
     upload_time: datetime = datetime.now()
     content_summary: Optional[Dict[str, Any]] = None
+    rag_processing: Optional[RAGProcessingInfo] = None
 
 class FileInfo(BaseModel):
     filename: str
@@ -39,3 +47,25 @@ class ProcessingStatus(BaseModel):
     progress: Optional[float] = None
     error_message: Optional[str] = None
     completed_at: Optional[datetime] = None
+
+class SearchResult(BaseModel):
+    """Model for search result"""
+    content: str
+    metadata: Dict[str, Any]
+    similarity_score: Optional[float] = None
+    id: str
+
+class SearchResponse(BaseModel):
+    """Model for search response"""
+    success: bool
+    query: str
+    results: List[SearchResult]
+    total_results: int
+    search_time: str
+    error: Optional[str] = None
+
+class ProcessingStats(BaseModel):
+    """Model for processing statistics"""
+    vector_store: Dict[str, Any]
+    embedding_service: Dict[str, Any]
+    pipeline_status: str

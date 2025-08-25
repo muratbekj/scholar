@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 
 from .extractor import DocumentExtractor
+from .chunking import TextChunkingService
 from ..models.file import FileInfo, FileUploadResponse, UploadError
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,14 @@ logger = logging.getLogger(__name__)
 class DocumentService:
     """Service for handling document uploads and processing"""
     
-    def __init__(self, upload_dir: str = "uploads"):
+    def __init__(self, upload_dir: str = "uploads", 
+                 large_document_threshold: int = 5000,  # characters
+                 chunk_size: int = 1000,
+                 chunk_overlap: int = 200):
         self.upload_dir = Path(upload_dir)
         self.upload_dir.mkdir(exist_ok=True)
+        self.large_document_threshold = large_document_threshold
+        self.chunking_service = TextChunkingService(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     
     async def process_upload(self, file_content: bytes, filename: str) -> FileUploadResponse:
         """Process uploaded file and extract content"""
@@ -43,10 +49,42 @@ class DocumentService:
             # Create content summary
             content_summary = self._create_content_summary(extracted_data)
             
+            # Check if document is large and needs chunking
+            full_text = content_summary['full_text']
+            is_large_document = len(full_text) > self.large_document_threshold
+            
+            if is_large_document:
+                # Chunk the document
+                chunks = self.chunking_service.chunk_text(full_text, strategy="sentences")
+                content_summary['chunks'] = [
+                    {
+                        'chunk_id': chunk.chunk_id,
+                        'content': chunk.content,
+                        'start_index': chunk.start_index,
+                        'end_index': chunk.end_index,
+                        'metadata': chunk.metadata
+                    } for chunk in chunks
+                ]
+                content_summary['chunking_info'] = {
+                    'is_chunked': True,
+                    'total_chunks': len(chunks),
+                    'chunking_strategy': 'sentences',
+                    'chunk_size': self.chunking_service.chunk_size,
+                    'chunk_overlap': self.chunking_service.chunk_overlap,
+                    'statistics': self.chunking_service.get_chunk_statistics(chunks)
+                }
+                logger.info(f"Document {filename} is large ({len(full_text)} chars), chunked into {len(chunks)} chunks")
+            else:
+                content_summary['chunking_info'] = {
+                    'is_chunked': False,
+                    'reason': f"Document size ({len(full_text)} chars) below threshold ({self.large_document_threshold} chars)"
+                }
+                logger.info(f"Document {filename} is small ({len(full_text)} chars), no chunking needed")
+            
             # Save extracted text to a separate file
             text_file_path = self.upload_dir / f"{file_id}_extracted.txt"
             with open(text_file_path, 'w', encoding='utf-8') as f:
-                f.write(content_summary['full_text'])
+                f.write(full_text)
             
             logger.info(f"Successfully processed file {filename} with ID {file_id}")
             
@@ -158,6 +196,46 @@ class DocumentService:
             return None
         except Exception as e:
             logger.error(f"Error getting extracted text for {file_id}: {str(e)}")
+            return None
+    
+    async def get_document_chunks(self, file_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Get chunks for a document if it was chunked"""
+        try:
+            file_info = await self.get_file_info(file_id)
+            if file_info and file_info.content_summary:
+                chunking_info = file_info.content_summary.get('chunking_info', {})
+                if chunking_info.get('is_chunked', False):
+                    return file_info.content_summary.get('chunks', [])
+                else:
+                    # If not chunked, return the full text as a single chunk
+                    full_text = await self.get_extracted_text(file_id)
+                    if full_text:
+                        return [{
+                            'chunk_id': f"{file_id}_full",
+                            'content': full_text,
+                            'start_index': 0,
+                            'end_index': len(full_text),
+                            'metadata': {
+                                'strategy': 'full_document',
+                                'is_chunked': False
+                            }
+                        }]
+            return None
+        except Exception as e:
+            logger.error(f"Error getting document chunks for {file_id}: {str(e)}")
+            return None
+    
+    async def get_chunk_by_id(self, file_id: str, chunk_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific chunk by its ID"""
+        try:
+            chunks = await self.get_document_chunks(file_id)
+            if chunks:
+                for chunk in chunks:
+                    if chunk['chunk_id'] == chunk_id:
+                        return chunk
+            return None
+        except Exception as e:
+            logger.error(f"Error getting chunk {chunk_id} for file {file_id}: {str(e)}")
             return None
     
     def get_supported_formats(self) -> List[str]:
