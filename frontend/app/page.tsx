@@ -2,10 +2,14 @@
 
 import React from "react"
 import { useState } from "react"
-import { Upload, FileText, Menu, History, Plus, Clock, Trash2 } from "lucide-react"
+import { Upload, FileText, Menu, History, Plus, Clock, Trash2, AlertCircle, CheckCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Loading } from "@/components/ui/loading"
+import { ProcessingStatus } from "@/components/ui/processing-status"
+import { useFileUpload } from "@/lib/hooks/useFileUpload"
+import { FileUploadResponse } from "@/lib/api"
 import Link from "next/link"
 
 type StudyMode = "upload" | "qa" | "quiz" | "flashcards"
@@ -16,6 +20,8 @@ interface StudySession {
   mode: StudyMode
   timestamp: Date
   preview: string
+  fileId?: string
+  sessionId?: string
 }
 
 export default function StudyApp() {
@@ -23,6 +29,8 @@ export default function StudyApp() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [showMenu, setShowMenu] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [uploadResult, setUploadResult] = useState<FileUploadResponse | null>(null)
+  const { uploadState, uploadFile, resetUpload } = useFileUpload()
   const [studySessions, setStudySessions] = useState<StudySession[]>([
     {
       id: "1",
@@ -46,6 +54,7 @@ export default function StudyApp() {
       preview: "Reviewed 15 flashcards on closures and promises",
     },
   ])
+  const [isNavigatingToQA, setIsNavigatingToQA] = useState(false)  // Add navigation state
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -82,35 +91,51 @@ export default function StudyApp() {
     }
   }
 
-  const handleModeSelect = (mode: StudyMode) => {
+  const handleModeSelect = async (mode: StudyMode) => {
     setShowMenu(false)
 
     if (uploadedFile) {
-      const newSession: StudySession = {
-        id: Date.now().toString(),
-        fileName: uploadedFile.name,
-        mode: mode,
-        timestamp: new Date(),
-        preview: `Started ${mode === "qa" ? "Q&A session" : mode === "quiz" ? "quiz" : "flashcard review"}`,
-      }
-      setStudySessions((prev) => [newSession, ...prev])
+      try {
+        // Upload file to backend with study mode
+        const result = await uploadFile(uploadedFile, mode)
+        if (result) {
+          setUploadResult(result)
 
-      // Store file data in localStorage for the target page
-      localStorage.setItem(
-        "uploadedFile",
-        JSON.stringify({
-          name: uploadedFile.name,
-          size: uploadedFile.size,
-          type: uploadedFile.type,
-        }),
-      )
+          const newSession: StudySession = {
+            id: Date.now().toString(),
+            fileName: uploadedFile.name,
+            mode: mode,
+            timestamp: new Date(),
+            preview: `Started ${mode === "qa" ? "Q&A session" : mode === "quiz" ? "quiz" : "flashcard review"}`,
+            fileId: result.file_id,
+          }
+          setStudySessions((prev) => [newSession, ...prev])
+
+          // Store file data and upload result in localStorage for the target page
+          localStorage.setItem(
+            "uploadedFile",
+            JSON.stringify({
+              name: uploadedFile.name,
+              size: uploadedFile.size,
+              type: uploadedFile.type,
+              fileId: result.file_id,
+              uploadResult: result,
+            }),
+          )
+        }
+      } catch (error) {
+        console.error("Failed to upload file:", error)
+        // Error is already handled by the useFileUpload hook
+      }
     }
   }
 
   const handleNewSession = () => {
     setUploadedFile(null)
+    setUploadResult(null)
     setShowMenu(false)
     setShowHistory(false)
+    resetUpload()
     // Clear any stored file data
     localStorage.removeItem("uploadedFile")
   }
@@ -119,6 +144,11 @@ export default function StudyApp() {
     setShowHistory(false)
     setShowMenu(false)
     alert(`Loading session: ${session.fileName} (${session.mode})`)
+  }
+
+  const handleNavigateToQA = () => {
+    setIsNavigatingToQA(true)
+    // The navigation will happen automatically via the Link component
   }
 
   const handleDeleteSession = (sessionId: string) => {
@@ -238,6 +268,7 @@ export default function StudyApp() {
       {/* Main Content */}
       <main className="flex-1 p-8">
         <div className="max-w-4xl mx-auto h-full">
+
           {!uploadedFile && (
             <div className="text-center space-y-8">
               <div className="space-y-4">
@@ -278,7 +309,7 @@ export default function StudyApp() {
             </div>
           )}
 
-          {uploadedFile && (
+          {uploadedFile && !uploadState.isUploading && !uploadState.error && !uploadResult && (
             <div className="space-y-8">
               <div className="text-center space-y-4">
                 <div className="flex justify-center">
@@ -286,7 +317,7 @@ export default function StudyApp() {
                 </div>
                 <div>
                   <h2 className="text-2xl font-bold font-montserrat text-center text-foreground mb-2">
-                    File Uploaded Successfully
+                    File Ready for Upload
                   </h2>
                   <p className="text-muted-foreground">
                     {uploadedFile.name} • {(uploadedFile.size / 1024 / 1024).toFixed(2)} MB
@@ -300,14 +331,128 @@ export default function StudyApp() {
                 </h3>
 
                 <div className="grid gap-4">
-                  <Link href="/qa" onClick={() => handleModeSelect("qa")}>
-                    <Button size="lg" className="w-full h-16 text-lg font-medium bg-accent hover:bg-accent/90">
-                      Q&A Chat
-                      <span className="text-sm font-normal ml-2 opacity-80">Ask questions about your document</span>
+                  <Button 
+                    size="lg" 
+                    className="w-full h-16 text-lg font-medium bg-accent hover:bg-accent/90"
+                    onClick={() => handleModeSelect("qa")}
+                  >
+                    Q&A Chat
+                    <span className="text-sm font-normal ml-2 opacity-80">Ask questions about your document</span>
+                  </Button>
+
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="w-full h-16 text-lg font-medium border-2 bg-transparent"
+                    onClick={() => handleModeSelect("quiz")}
+                  >
+                    Generate Quiz
+                    <span className="text-sm font-normal ml-2 opacity-80">Test your knowledge</span>
+                  </Button>
+
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="w-full h-16 text-lg font-medium border-2 bg-transparent"
+                    onClick={() => handleModeSelect("flashcards")}
+                  >
+                    Create Flashcards
+                    <span className="text-sm font-normal ml-2 opacity-80">Review key concepts</span>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Upload Loading State */}
+          {uploadState.isUploading && (
+            <div className="space-y-8">
+              <div className="text-center space-y-4">
+                <Loading 
+                  message="Processing your document..." 
+                  progress={uploadState.uploadProgress}
+                  showProgress={true}
+                />
+                <ProcessingStatus
+                  steps={uploadState.processingSteps}
+                  totalTime={uploadState.uploadResult?.rag_processing?.processing_time_seconds}
+                  isComplete={false}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Upload Error State */}
+          {uploadState.error && (
+            <div className="space-y-8">
+              <div className="text-center space-y-4">
+                <div className="flex justify-center">
+                  <AlertCircle className="h-16 w-16 text-destructive" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold font-montserrat text-center text-foreground mb-2">
+                    Upload Failed
+                  </h2>
+                  <p className="text-destructive mb-4">{uploadState.error}</p>
+                  <Button onClick={handleNewSession} variant="outline">
+                    Try Again
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Upload Success State */}
+          {uploadResult && (
+            <div className="space-y-8">
+              <div className="text-center space-y-4">
+                <div className="flex justify-center">
+                  <CheckCircle className="h-16 w-16 text-green-500" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold font-montserrat text-center text-foreground mb-2">
+                    File Processed Successfully
+                  </h2>
+                  <p className="text-muted-foreground mb-4">
+                    {uploadResult.filename} • {(uploadResult.size / 1024 / 1024).toFixed(2)} MB
+                  </p>
+                  
+                  {/* Show processing details */}
+                  <ProcessingStatus
+                    steps={uploadState.processingSteps}
+                    totalTime={uploadResult.rag_processing?.processing_time_seconds}
+                    isComplete={true}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold font-montserrat text-center text-foreground">
+                  Ready to start studying:
+                </h3>
+
+                <div className="grid gap-4">
+                  <Link href="/qa" onClick={handleNavigateToQA}>
+                    <Button 
+                      size="lg" 
+                      className="w-full h-16 text-lg font-medium bg-accent hover:bg-accent/90"
+                      disabled={isNavigatingToQA}
+                    >
+                      {isNavigatingToQA ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                          Setting up Q&A session...
+                        </>
+                      ) : (
+                        <>
+                          Start Q&A Chat
+                          <span className="text-sm font-normal ml-2 opacity-80">Ask questions about your document</span>
+                        </>
+                      )}
                     </Button>
                   </Link>
 
-                  <Link href="/quiz" onClick={() => handleModeSelect("quiz")}>
+                  <Link href="/quiz">
                     <Button
                       size="lg"
                       variant="outline"
@@ -318,7 +463,7 @@ export default function StudyApp() {
                     </Button>
                   </Link>
 
-                  <Link href="/flashcards" onClick={() => handleModeSelect("flashcards")}>
+                  <Link href="/flashcards">
                     <Button
                       size="lg"
                       variant="outline"

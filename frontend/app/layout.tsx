@@ -1,6 +1,8 @@
 import type React from "react"
 import type { Metadata } from "next"
 import { Inter, Montserrat } from "next/font/google"
+import { ToastProvider } from "@/components/ui/toast"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
 import "./globals.css"
 
 const inter = Inter({
@@ -29,7 +31,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${inter.variable} ${montserrat.variable} antialiased`}>
-      <body className="font-sans">{children}</body>
+      <body className="font-sans">
+        <ErrorBoundary>
+          <ToastProvider>
+            {children}
+          </ToastProvider>
+        </ErrorBoundary>
+      </body>
     </html>
   )
 }
