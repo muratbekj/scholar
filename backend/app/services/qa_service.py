@@ -136,15 +136,13 @@ class QAService:
         if not request.file_id:
             raise ValueError("File ID is required for new sessions")
         
-        # Get file info to create session
-        file_info = await self.document_service.get_file_info(request.file_id)
-        if not file_info:
-            raise ValueError(f"File {request.file_id} not found")
+        # Create new session directly without file info lookup
+        # The filename should be provided in the request or we can use a default
+        filename = getattr(request, 'filename', f"file_{request.file_id}")
         
-        # Create new session
         session_data = QASessionCreate(
             file_id=request.file_id,
-            filename=file_info.filename
+            filename=filename
         )
         
         session_response = await self.create_session(session_data)
