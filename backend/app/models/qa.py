@@ -26,6 +26,7 @@ class QARequest(BaseModel):
     question: str
     file_id: Optional[str] = None
     session_id: Optional[str] = None
+    filename: Optional[str] = None  # Add filename to avoid file lookup
     use_rag: bool = True
     search_k: int = 5
 
