@@ -195,6 +195,84 @@ Questions:"""
         except Exception as e:
             logger.error(f"Error generating quiz questions: {str(e)}")
             return self._generate_fallback_questions(content, num_questions, question_types)
+
+    async def generate_flashcards(self, content: str) -> List[Dict[str, Any]]:
+        """Generate 10 flashcards with random difficulty from document content"""
+        try:
+            import random
+            
+            # Randomly select difficulty for variety
+            difficulties = ["easy", "medium", "hard"]
+            selected_difficulty = random.choice(difficulties)
+            
+            prompt = f"""You are an expert educator creating flashcards based on the following document. Your task is to:
+
+1. FIRST: Read and thoroughly understand the document content
+2. SECOND: Identify the key concepts, definitions, and important facts
+3. THIRD: Generate exactly 10 meaningful flashcards that help with learning
+
+Difficulty level: {selected_difficulty}
+Number of flashcards: 10
+
+CRITICAL REQUIREMENTS:
+- Flashcards must be based on SPECIFIC information from the document
+- Front (question) should be clear and concise
+- Back (answer) should be comprehensive but not too long
+- Mix different types: definitions, concepts, facts, applications
+- Questions should test understanding, not just memorization
+- Answers should be informative and educational
+
+Document Content:
+{content}
+
+Generate the flashcards in this exact JSON format:
+[
+  {{
+    "front": "What is artificial intelligence?",
+    "back": "Artificial intelligence (AI) is a branch of computer science that aims to create intelligent machines capable of performing tasks that typically require human intelligence, such as learning, reasoning, problem-solving, and decision-making.",
+    "difficulty": "easy",
+    "category": "Definitions"
+  }}
+]
+
+Flashcards:"""
+            
+            response = await self._generate_response(prompt)
+            
+            # Parse JSON response
+            try:
+                # Extract JSON from response (handle potential text before/after JSON)
+                start_idx = response.find('[')
+                end_idx = response.rfind(']') + 1
+                if start_idx != -1 and end_idx != -1:
+                    json_str = response[start_idx:end_idx]
+                    flashcards_data = json.loads(json_str)
+                else:
+                    raise ValueError("No valid JSON found in response")
+                
+                # Validate and clean up flashcards
+                validated_flashcards = []
+                for i, card in enumerate(flashcards_data[:10]):  # Ensure exactly 10 cards
+                    if self._validate_flashcard_format(card):
+                        # Add unique ID
+                        card["id"] = f"flashcard_{i+1}"
+                        validated_flashcards.append(card)
+                
+                # If we don't have 10 cards, generate fallback cards
+                if len(validated_flashcards) < 10:
+                    fallback_cards = self._generate_fallback_flashcards(content, 10 - len(validated_flashcards))
+                    validated_flashcards.extend(fallback_cards)
+                
+                return validated_flashcards[:10]  # Ensure exactly 10 cards
+                
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Error parsing flashcards JSON: {str(e)}")
+                # Fallback: generate simple flashcards
+                return self._generate_fallback_flashcards(content, 10)
+            
+        except Exception as e:
+            logger.error(f"Error generating flashcards: {str(e)}")
+            return self._generate_fallback_flashcards(content, 10)
     
     def _validate_question_format(self, question: Dict[str, Any]) -> bool:
         """Validate that a question has the required format"""
@@ -215,6 +293,112 @@ Questions:"""
                 return False
         
         return True
+    
+    def _validate_flashcard_format(self, flashcard: Dict[str, Any]) -> bool:
+        """Validate that a flashcard has the required format"""
+        required_fields = ["front", "back"]
+        
+        for field in required_fields:
+            if field not in flashcard or not flashcard[field]:
+                return False
+        
+        # Validate difficulty if present
+        if "difficulty" in flashcard:
+            valid_difficulties = ["easy", "medium", "hard"]
+            if flashcard["difficulty"] not in valid_difficulties:
+                flashcard["difficulty"] = "medium"  # Default to medium
+        else:
+            flashcard["difficulty"] = "medium"
+        
+        return True
+    
+    def _generate_fallback_flashcards(self, content: str, num_cards: int) -> List[Dict[str, Any]]:
+        """Generate intelligent fallback flashcards when LLM generation fails"""
+        flashcards = []
+        
+        # Analyze document content
+        content_analysis = self._analyze_document_content(content)
+        
+        # Generate flashcards based on actual document structure and content
+        card_templates = self._generate_flashcard_templates(content_analysis, num_cards)
+        
+        for i, template in enumerate(card_templates):
+            flashcard_data = self._create_flashcard_from_template(template, content_analysis, i)
+            flashcards.append(flashcard_data)
+        
+        return flashcards
+    
+    def _generate_flashcard_templates(self, content_analysis: Dict[str, Any], num_cards: int) -> List[str]:
+        """Generate flashcard templates based on content analysis"""
+        templates = []
+        
+        # Use key concepts for definitions
+        for concept in content_analysis.get('key_concepts', [])[:3]:
+            templates.append(f"Define: {concept}")
+        
+        # Use definitions for concept questions
+        for term, definition in list(content_analysis.get('definitions', {}).items())[:3]:
+            templates.append(f"What is {term}?")
+        
+        # Use applications for application questions
+        for app in content_analysis.get('applications', [])[:2]:
+            templates.append(f"Application: {app}")
+        
+        # Use main topic for general questions
+        if content_analysis.get('main_topic'):
+            templates.append(f"What is {content_analysis['main_topic']}?")
+            templates.append(f"Key features of {content_analysis['main_topic']}")
+        
+        # Fill remaining slots with generic templates
+        while len(templates) < num_cards:
+            templates.append("Key concept from the document")
+        
+        return templates[:num_cards]
+    
+    def _create_flashcard_from_template(self, template: str, content_analysis: Dict[str, Any], index: int) -> Dict[str, Any]:
+        """Create a flashcard from a template"""
+        import random
+        
+        difficulties = ["easy", "medium", "hard"]
+        categories = ["Definitions", "Concepts", "Applications", "General"]
+        
+        if template.startswith("Define:"):
+            concept = template.replace("Define:", "").strip()
+            return {
+                "id": f"flashcard_{index+1}",
+                "front": f"What is {concept}?",
+                "back": f"{concept} is a key concept discussed in the document that relates to the main topic.",
+                "difficulty": random.choice(difficulties),
+                "category": "Definitions"
+            }
+        elif template.startswith("What is"):
+            term = template.replace("What is ", "").replace("?", "").strip()
+            definition = content_analysis.get('definitions', {}).get(term, f"{term} is an important term discussed in the document.")
+            return {
+                "id": f"flashcard_{index+1}",
+                "front": template,
+                "back": definition,
+                "difficulty": random.choice(difficulties),
+                "category": "Definitions"
+            }
+        elif template.startswith("Application:"):
+            app = template.replace("Application:", "").strip()
+            return {
+                "id": f"flashcard_{index+1}",
+                "front": f"What is an application of {content_analysis.get('main_topic', 'this technology')}?",
+                "back": f"One application is: {app}",
+                "difficulty": random.choice(difficulties),
+                "category": "Applications"
+            }
+        else:
+            # Generic template
+            return {
+                "id": f"flashcard_{index+1}",
+                "front": f"Key concept {index+1} from the document",
+                "back": f"This is an important concept related to {content_analysis.get('main_topic', 'the main topic')} discussed in the document.",
+                "difficulty": random.choice(difficulties),
+                "category": random.choice(categories)
+            }
     
     def _generate_fallback_questions(self, content: str, num_questions: int, question_types: List[str]) -> List[Dict[str, Any]]:
         """Generate intelligent fallback questions when LLM generation fails"""
