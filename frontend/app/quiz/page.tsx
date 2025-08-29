@@ -288,8 +288,8 @@ export default function QuizPage() {
         </div>
       )}
 
-      <main className="p-8">
-        <div className="max-w-2xl mx-auto space-y-8">
+      <main className="flex flex-col flex-1 min-h-0 p-8 pb-0">
+        <div className="max-w-2xl mx-auto space-y-8 flex-1">
           {/* Progress Bar */}
           <div className="space-y-2">
             <div className="flex justify-between text-sm text-muted-foreground">
@@ -326,23 +326,29 @@ export default function QuizPage() {
               ))}
             </div>
           </Card>
-
-          {/* Navigation */}
-          <div className="flex justify-between">
-            <Button variant="outline" onClick={handlePreviousQuestion} disabled={currentQuestionIndex === 0}>
-              Previous
-            </Button>
-
-            <Button
-              onClick={handleNextQuestion}
-              disabled={!selectedAnswer}
-              className="bg-accent hover:bg-accent/90"
-            >
-              {currentQuestionIndex === questions.length - 1 ? "Finish Quiz" : "Next Question"}
-            </Button>
-          </div>
         </div>
       </main>
+
+      {/* Sticky Navigation */}
+      <div className="sticky bottom-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t border-border">
+        <div className="p-8 pt-4">
+          <div className="max-w-2xl mx-auto">
+            <div className="flex justify-between">
+              <Button variant="outline" onClick={handlePreviousQuestion} disabled={currentQuestionIndex === 0}>
+                Previous
+              </Button>
+
+              <Button
+                onClick={handleNextQuestion}
+                disabled={!selectedAnswer}
+                className="bg-accent hover:bg-accent/90"
+              >
+                {currentQuestionIndex === questions.length - 1 ? "Finish Quiz" : "Next Question"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

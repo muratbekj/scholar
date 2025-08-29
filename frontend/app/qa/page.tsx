@@ -212,9 +212,9 @@ export default function QAPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="flex items-center justify-between p-4 border-b border-border">
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Sticky Header */}
+      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setShowMenu(!showMenu)} className="p-2">
             <Menu className="h-5 w-5" />
@@ -238,7 +238,7 @@ export default function QAPage() {
 
       {/* Hamburger Menu */}
       {showMenu && (
-        <div className="absolute top-16 left-4 z-50 bg-card border border-border rounded-lg shadow-lg p-2 min-w-48">
+        <div className="absolute top-[calc(4rem+1px)] left-4 z-50 bg-card border border-border rounded-lg shadow-lg p-2 min-w-48">
           <Link href="/" onClick={handleNewSession}>
             <Button variant="ghost" className="w-full justify-start gap-2 text-sm">
               <Plus className="h-4 w-4" />
@@ -275,10 +275,10 @@ export default function QAPage() {
       )}
 
       {/* Main Content */}
-      <main className="flex flex-col h-[calc(100vh-5rem)]">
+      <main className="flex flex-col flex-1 min-h-0">
         {/* Chat Messages */}
-        <ScrollArea className="flex-1 p-4" ref={scrollAreaRef}>
-          <div className="max-w-4xl mx-auto space-y-4">
+        <ScrollArea className="flex-1 p-4 pb-0" ref={scrollAreaRef}>
+          <div className="max-w-4xl mx-auto space-y-4 pb-4">
             {sessionState.session?.messages && sessionState.session.messages.length > 0 ? (
               sessionState.session.messages.map((message) => (
                 <Message 
@@ -300,15 +300,19 @@ export default function QAPage() {
             )}
           </div>
         </ScrollArea>
-
-        {/* Chat Input */}
-        <ChatInput
-          onSendMessage={handleSendMessage}
-          isLoading={sessionState.isAsking}
-          disabled={!sessionState.session}
-          placeholder="Ask a question about your document..."
-        />
       </main>
+
+      {/* Sticky Chat Input */}
+      <div className="sticky bottom-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t border-border">
+        <div className="p-4">
+          <ChatInput
+            onSendMessage={handleSendMessage}
+            isLoading={sessionState.isAsking}
+            disabled={!sessionState.session}
+            placeholder="Ask a question about your document..."
+          />
+        </div>
+      </div>
 
       {/* Session History Modal */}
       {showHistory && (
