@@ -224,21 +224,38 @@ class QuizService:
         return False
     
     async def _get_document_content(self, file_id: str) -> str:
-        """Get document content using RAG pipeline"""
+        """Get document content using document service"""
         try:
-            # Get document chunks from RAG pipeline
-            chunks = await rag_pipeline_service.get_document_chunks(file_id)
+            # First try to get the full extracted text
+            full_text = await self.document_service.get_extracted_text(file_id)
             
-            # Combine chunks into content
-            content = "\n\n".join([chunk["content"] for chunk in chunks])
+            if full_text and full_text.strip():
+                logger.info(f"Retrieved full text content for file {file_id} ({len(full_text)} characters)")
+                return full_text
             
-            if not content.strip():
-                raise ValueError("No content found in document")
+            # Fallback: try to get chunks
+            chunks = await self.document_service.get_document_chunks(file_id)
             
-            return content
+            if chunks:
+                # Combine chunks into content
+                content = "\n\n".join([chunk["content"] for chunk in chunks])
+                
+                if content.strip():
+                    logger.info(f"Retrieved chunked content for file {file_id} ({len(content)} characters)")
+                    return content
+            
+            # If still no content, try to get file info
+            file_info = await self.document_service.get_file_info(file_id)
+            if file_info and file_info.content_summary:
+                full_text = file_info.content_summary.get('full_text', '')
+                if full_text and full_text.strip():
+                    logger.info(f"Retrieved content from file info for file {file_id} ({len(full_text)} characters)")
+                    return full_text
+            
+            raise ValueError(f"No content found in document {file_id}")
             
         except Exception as e:
-            logger.error(f"Error getting document content: {str(e)}")
+            logger.error(f"Error getting document content for {file_id}: {str(e)}")
             raise
     
     async def _generate_questions(self, 
