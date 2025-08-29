@@ -25,8 +25,7 @@ function createWindow() {
   if (isDev) {
     // In development, load from Next.js dev server
     mainWindow.loadURL('http://localhost:3000');
-    // Open DevTools in development
-    mainWindow.webContents.openDevTools();
+    // DevTools can be opened manually with Cmd+Option+I (Mac) or Ctrl+Shift+I (Windows/Linux)
   } else {
     // In production, load the built Next.js app
     mainWindow.loadFile(path.join(__dirname, '../frontend/out/index.html'));

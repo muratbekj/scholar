@@ -1,5 +1,7 @@
 import React from 'react';
 import { User, Bot, Clock } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { QAMessage } from '@/lib/api';
 
 interface MessageProps {
@@ -29,9 +31,38 @@ export const Message: React.FC<MessageProps> = ({ message, isUser }) => {
         }`}
       >
         <div className="space-y-2">
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">
-            {message.content}
-          </p>
+          <div className="text-sm leading-relaxed prose prose-sm max-w-none dark:prose-invert">
+            <ReactMarkdown 
+              remarkPlugins={[remarkGfm]}
+              components={{
+                // Customize heading styles
+                h1: ({children}) => <h1 className="text-lg font-bold mb-2">{children}</h1>,
+                h2: ({children}) => <h2 className="text-base font-semibold mb-2">{children}</h2>,
+                h3: ({children}) => <h3 className="text-sm font-semibold mb-1">{children}</h3>,
+                // Customize list styles
+                ul: ({children}) => <ul className="list-disc list-inside space-y-1 mb-2">{children}</ul>,
+                ol: ({children}) => <ol className="list-decimal list-inside space-y-1 mb-2">{children}</ol>,
+                // Customize paragraph styles
+                p: ({children}) => <p className="mb-2">{children}</p>,
+                // Customize strong/bold text
+                strong: ({children}) => <strong className="font-semibold">{children}</strong>,
+                // Customize emphasis/italic text
+                em: ({children}) => <em className="italic">{children}</em>,
+                // Customize code blocks
+                code: ({children, className}) => {
+                  const isInline = !className;
+                  if (isInline) {
+                    return <code className="bg-muted px-1 py-0.5 rounded text-xs font-mono">{children}</code>;
+                  }
+                  return <code className="block bg-muted p-2 rounded text-xs font-mono overflow-x-auto">{children}</code>;
+                },
+                // Customize blockquotes
+                blockquote: ({children}) => <blockquote className="border-l-4 border-border pl-4 italic text-muted-foreground">{children}</blockquote>,
+              }}
+            >
+              {message.content || ''}
+            </ReactMarkdown>
+          </div>
           
           {/* Show sources for assistant messages */}
           {!isUser && message.metadata?.rag_context && (

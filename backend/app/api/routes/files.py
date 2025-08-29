@@ -41,6 +41,7 @@ async def upload_file(
             raise HTTPException(status_code=400, detail="Empty file")
         
         # Determine if embedding is needed based on study mode
+        # QA mode needs embeddings for RAG, Quiz/Flashcard modes need content extraction but not embeddings
         enable_embedding = study_mode == "qa"
         
         if enable_embedding:
@@ -86,8 +87,13 @@ async def upload_file(
                 raise HTTPException(status_code=500, detail=result.get('error', 'Processing failed'))
             
             # Convert to FileUploadResponse format
+            mode_specific_message = {
+                "quiz": "File uploaded successfully! You can now generate a quiz based on this document.",
+                "flashcards": "File uploaded successfully! You can now generate flashcards based on this document."
+            }.get(study_mode, f"File uploaded and processed successfully for {study_mode} mode")
+            
             upload_response = FileUploadResponse(
-                message=f"File uploaded and processed successfully for {study_mode} mode",
+                message=mode_specific_message,
                 file_id=result['file_id'],
                 filename=file.filename,
                 size=result['document_processing']['file_size'],
