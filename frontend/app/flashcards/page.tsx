@@ -205,11 +205,13 @@ export default function FlashcardsPage() {
               <span>Progress</span>
               <span>{Math.round(((currentFlashcardIndex + 1) / flashcards.length) * 100)}%</span>
             </div>
-            <div className="w-full bg-muted rounded-full h-4 overflow-hidden">
+            <div className="w-full bg-muted rounded-full h-4 overflow-hidden shadow-inner">
               <div
-                className="bg-gradient-to-r from-accent to-accent/80 h-4 rounded-full transition-all duration-500 ease-out shadow-sm"
+                className="bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 h-4 rounded-full transition-all duration-700 ease-out shadow-sm relative overflow-hidden"
                 style={{ width: `${((currentFlashcardIndex + 1) / flashcards.length) * 100}%` }}
-              />
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_2s_ease-in-out_infinite]" />
+              </div>
             </div>
           </div>
 
