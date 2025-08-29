@@ -145,6 +145,29 @@ export interface QuizResult {
   feedback?: string;
 }
 
+// Flashcard Types
+export interface FlashcardRequest {
+  file_id: string;
+  filename: string;
+}
+
+export interface Flashcard {
+  id: string;
+  front: string;  // Question/prompt
+  back: string;   // Answer/explanation
+  difficulty: 'easy' | 'medium' | 'hard';
+  category?: string;
+}
+
+export interface FlashcardResponse {
+  flashcards: Flashcard[];
+  file_id: string;
+  filename: string;
+  total_cards: number;
+  processing_time: number;
+  created_at: string;
+}
+
 // API service class
 class ApiService {
   private baseUrl: string;
@@ -285,6 +308,18 @@ class ApiService {
 
   async quizHealthCheck(): Promise<{ status: string; service: string; active_quizzes: number; active_sessions: number; llm_integration: string }> {
     return this.request<{ status: string; service: string; active_quizzes: number; active_sessions: number; llm_integration: string }>('/quiz/health');
+  }
+
+  // Flashcard API Methods
+  async generateFlashcards(request: FlashcardRequest): Promise<FlashcardResponse> {
+    return this.request<FlashcardResponse>('/flashcards/generate', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  async flashcardHealthCheck(): Promise<{ status: string; service: string; llm_integration: string }> {
+    return this.request<{ status: string; service: string; llm_integration: string }>('/flashcards/health');
   }
 }
 

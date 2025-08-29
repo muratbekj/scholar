@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .api.routes import files, qa, quiz
+from .api.routes import files, qa, quiz, flashcards
 
 app = FastAPI(
     title="Scholar Backend API",
@@ -21,6 +21,7 @@ app.add_middleware(
 app.include_router(files.router)
 app.include_router(qa.router)
 app.include_router(quiz.router)
+app.include_router(flashcards.router)
 
 @app.get("/")
 async def root():
