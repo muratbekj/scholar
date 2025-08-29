@@ -122,6 +122,15 @@ export default function StudyApp() {
               uploadResult: result,
             }),
           )
+
+          // Automatically navigate to the appropriate page based on mode
+          if (mode === "quiz") {
+            window.location.href = "/quiz"
+          } else if (mode === "qa") {
+            window.location.href = "/qa"
+          } else if (mode === "flashcards") {
+            window.location.href = "/flashcards"
+          }
         }
       } catch (error) {
         console.error("Failed to upload file:", error)
@@ -426,54 +435,9 @@ export default function StudyApp() {
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold font-montserrat text-center text-foreground">
-                  Ready to start studying:
-                </h3>
-
-                <div className="grid gap-4">
-                  <Link href="/qa" onClick={handleNavigateToQA}>
-                    <Button 
-                      size="lg" 
-                      className="w-full h-16 text-lg font-medium bg-accent hover:bg-accent/90"
-                      disabled={isNavigatingToQA}
-                    >
-                      {isNavigatingToQA ? (
-                        <>
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                          Setting up Q&A session...
-                        </>
-                      ) : (
-                        <>
-                          Start Q&A Chat
-                          <span className="text-sm font-normal ml-2 opacity-80">Ask questions about your document</span>
-                        </>
-                      )}
-                    </Button>
-                  </Link>
-
-                  <Link href="/quiz">
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      className="w-full h-16 text-lg font-medium border-2 bg-transparent"
-                    >
-                      Generate Quiz
-                      <span className="text-sm font-normal ml-2 opacity-80">Test your knowledge</span>
-                    </Button>
-                  </Link>
-
-                  <Link href="/flashcards">
-                    <Button
-                      size="lg"
-                      variant="outline"
-                      className="w-full h-16 text-lg font-medium border-2 bg-transparent"
-                    >
-                      Create Flashcards
-                      <span className="text-sm font-normal ml-2 opacity-80">Review key concepts</span>
-                    </Button>
-                  </Link>
-                </div>
+              <div className="text-center space-y-4">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-accent mx-auto"></div>
+                <p className="text-muted-foreground">Redirecting to study mode...</p>
               </div>
             </div>
           )}
