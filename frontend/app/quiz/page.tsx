@@ -257,8 +257,8 @@ export default function QuizPage() {
   const selectedAnswer = selectedAnswers[currentQuestion.id]
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="flex items-center justify-between p-4 border-b border-border">
+    <div className="min-h-screen bg-background flex flex-col">
+      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setShowMenu(!showMenu)} className="p-2">
             <Menu className="h-5 w-5" />
@@ -274,7 +274,7 @@ export default function QuizPage() {
 
       {/* Hamburger Menu */}
       {showMenu && (
-        <div className="absolute top-16 left-4 z-50 bg-card border border-border rounded-lg shadow-lg p-2 min-w-48">
+        <div className="absolute top-[calc(4rem+1px)] left-4 z-50 bg-card border border-border rounded-lg shadow-lg p-2 min-w-48">
           <Link href="/" onClick={handleNewSession}>
             <Button variant="ghost" className="w-full justify-start gap-2 text-sm">
               <Plus className="h-4 w-4" />
