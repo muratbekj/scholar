@@ -67,6 +67,84 @@ export interface QASession {
   session_duration?: number;
 }
 
+// Quiz Types
+export interface QuizRequest {
+  file_id: string;
+  filename: string;
+  num_questions: number;
+  difficulty: 'easy' | 'medium' | 'hard';
+  question_types?: ('multiple_choice' | 'true_false' | 'short_answer')[];
+  include_explanations?: boolean;
+  estimated_time?: number;
+}
+
+export interface QuizResponse {
+  quiz_id: string;
+  title: string;
+  description?: string;
+  file_id: string;
+  filename: string;
+  total_questions: number;
+  total_points: number;
+  difficulty: 'easy' | 'medium' | 'hard';
+  estimated_time?: number;
+  created_at: string;
+  processing_time: number;
+}
+
+export interface QuizQuestionResponse {
+  id: string;
+  question: string;
+  question_type: 'multiple_choice' | 'true_false' | 'short_answer';
+  options?: string[];
+  difficulty: 'easy' | 'medium' | 'hard';
+  points: number;
+}
+
+export interface QuizSessionCreate {
+  quiz_id: string;
+  file_id: string;
+  filename: string;
+}
+
+export interface QuizSessionResponse {
+  session_id: string;
+  quiz_id: string;
+  file_id: string;
+  filename: string;
+  started_at: string;
+  is_completed: boolean;
+  score?: number;
+  time_taken?: number;
+}
+
+export interface QuizSubmission {
+  session_id: string;
+  answers: Record<string, string>;  // question_id -> user_answer
+}
+
+export interface QuizResult {
+  session_id: string;
+  quiz_id: string;
+  score: number;  // percentage
+  total_points_earned: number;
+  total_possible_points: number;
+  correct_answers: number;
+  total_questions: number;
+  time_taken: number;  // in seconds
+  completed_at: string;
+  question_results: Array<{
+    question_id: string;
+    question: string;
+    user_answer: string;
+    correct_answer: string;
+    is_correct: boolean;
+    points_earned: number;
+    explanation?: string;
+  }>;
+  feedback?: string;
+}
+
 // API service class
 class ApiService {
   private baseUrl: string;
@@ -163,6 +241,50 @@ class ApiService {
   // Health check
   async healthCheck(): Promise<{ status: string; service: string }> {
     return this.request<{ status: string; service: string }>('/health');
+  }
+
+  // Quiz API Methods
+  async generateQuiz(request: QuizRequest): Promise<QuizResponse> {
+    return this.request<QuizResponse>('/quiz/generate', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  async createQuizSession(sessionData: QuizSessionCreate): Promise<QuizSessionResponse> {
+    return this.request<QuizSessionResponse>('/quiz/sessions', {
+      method: 'POST',
+      body: JSON.stringify(sessionData),
+    });
+  }
+
+  async getQuizQuestions(quizId: string): Promise<QuizQuestionResponse[]> {
+    return this.request<QuizQuestionResponse[]>(`/quiz/${quizId}/questions`);
+  }
+
+  async submitQuiz(submission: QuizSubmission): Promise<QuizResult> {
+    return this.request<QuizResult>('/quiz/submit', {
+      method: 'POST',
+      body: JSON.stringify(submission),
+    });
+  }
+
+  async getQuizSession(sessionId: string): Promise<QuizSessionResponse> {
+    return this.request<QuizSessionResponse>(`/quiz/sessions/${sessionId}`);
+  }
+
+  async getAllQuizSessions(): Promise<QuizSessionResponse[]> {
+    return this.request<QuizSessionResponse[]>('/quiz/sessions');
+  }
+
+  async deleteQuizSession(sessionId: string): Promise<{ message: string; session_id: string }> {
+    return this.request<{ message: string; session_id: string }>(`/quiz/sessions/${sessionId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async quizHealthCheck(): Promise<{ status: string; service: string; active_quizzes: number; active_sessions: number; llm_integration: string }> {
+    return this.request<{ status: string; service: string; active_quizzes: number; active_sessions: number; llm_integration: string }>('/quiz/health');
   }
 }
 

@@ -92,8 +92,8 @@ export default function FlashcardsPage() {
 
   if (flashcards.length === 0) {
     return (
-      <div className="min-h-screen bg-background">
-        <header className="flex items-center justify-between p-4 border-b border-border">
+      <div className="min-h-screen bg-background flex flex-col">
+        <header className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" onClick={() => setShowMenu(!showMenu)} className="p-2">
               <Menu className="h-5 w-5" />
@@ -120,8 +120,8 @@ export default function FlashcardsPage() {
   const currentFlashcard = flashcards[currentFlashcardIndex]
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="flex items-center justify-between p-4 border-b border-border">
+    <div className="min-h-screen bg-background flex flex-col">
+      <header className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex items-center justify-between p-4 border-b border-border">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => setShowMenu(!showMenu)} className="p-2">
             <Menu className="h-5 w-5" />
@@ -137,7 +137,7 @@ export default function FlashcardsPage() {
 
       {/* Hamburger Menu */}
       {showMenu && (
-        <div className="absolute top-16 left-4 z-50 bg-card border border-border rounded-lg shadow-lg p-2 min-w-48">
+        <div className="absolute top-[calc(4rem+1px)] left-4 z-50 bg-card border border-border rounded-lg shadow-lg p-2 min-w-48">
           <Link href="/" onClick={handleNewSession}>
             <Button variant="ghost" className="w-full justify-start gap-2 text-sm">
               <Plus className="h-4 w-4" />
@@ -151,8 +151,8 @@ export default function FlashcardsPage() {
         </div>
       )}
 
-      <main className="p-8">
-        <div className="max-w-2xl mx-auto space-y-8">
+      <main className="flex flex-col flex-1 min-h-0 p-8 pb-0">
+        <div className="max-w-2xl mx-auto space-y-8 flex-1">
           {/* Progress and Controls */}
           <div className="flex items-center justify-between">
             <div className="space-y-1">
@@ -226,39 +226,6 @@ export default function FlashcardsPage() {
             </Card>
           </div>
 
-          {/* Navigation */}
-          <div className="flex items-center justify-between">
-            <Button
-              variant="outline"
-              onClick={handlePreviousFlashcard}
-              disabled={currentFlashcardIndex === 0}
-              className="flex items-center gap-2 bg-transparent"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Previous
-            </Button>
-
-            <div className="flex items-center gap-2">
-              <Button
-                variant={isFlipped ? "outline" : "default"}
-                onClick={handleFlipCard}
-                className="bg-accent hover:bg-accent/90"
-              >
-                {isFlipped ? "Show Question" : "Show Answer"}
-              </Button>
-            </div>
-
-            <Button
-              variant="outline"
-              onClick={handleNextFlashcard}
-              disabled={currentFlashcardIndex === flashcards.length - 1}
-              className="flex items-center gap-2 bg-transparent"
-            >
-              Next
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-
           {/* Study Stats */}
           <Card className="p-4">
             <div className="flex items-center justify-between text-sm">
@@ -278,6 +245,45 @@ export default function FlashcardsPage() {
           </Card>
         </div>
       </main>
+
+      {/* Sticky Navigation */}
+      <div className="sticky bottom-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t border-border">
+        <div className="p-8 pt-4">
+          <div className="max-w-2xl mx-auto">
+            <div className="flex items-center justify-between">
+              <Button
+                variant="outline"
+                onClick={handlePreviousFlashcard}
+                disabled={currentFlashcardIndex === 0}
+                className="flex items-center gap-2 bg-transparent"
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={isFlipped ? "outline" : "default"}
+                  onClick={handleFlipCard}
+                  className="bg-accent hover:bg-accent/90"
+                >
+                  {isFlipped ? "Show Question" : "Show Answer"}
+                </Button>
+              </div>
+
+              <Button
+                variant="outline"
+                onClick={handleNextFlashcard}
+                disabled={currentFlashcardIndex === flashcards.length - 1}
+                className="flex items-center gap-2 bg-transparent"
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
