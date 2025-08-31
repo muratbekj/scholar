@@ -281,7 +281,7 @@ export default function StudyApp() {
           {!uploadedFile && (
             <div className="text-center space-y-8">
               <div className="space-y-4">
-                <h2 className="text-3xl font-bold font-montserrat text-foreground">Share Your File</h2>
+                <h2 className="text-3xl font-bold font-montserrat text-foreground">ScholAr</h2>
                 <p className="text-muted-foreground text-lg">
                   Upload a document to start studying with AI-powered tools
                 </p>
@@ -342,7 +342,8 @@ export default function StudyApp() {
                 <div className="grid gap-4">
                   <Button 
                     size="lg" 
-                    className="w-full h-16 text-lg font-medium bg-accent hover:bg-accent/90"
+                    variant="outline"
+                    className="w-full h-16 text-lg font-medium border-2 bg-transparent hover:bg-accent hover:text-accent-foreground"
                     onClick={() => handleModeSelect("qa")}
                   >
                     Q&A Chat
@@ -352,7 +353,7 @@ export default function StudyApp() {
                   <Button
                     size="lg"
                     variant="outline"
-                    className="w-full h-16 text-lg font-medium border-2 bg-transparent"
+                    className="w-full h-16 text-lg font-medium border-2 bg-transparent hover:bg-accent hover:text-accent-foreground"
                     onClick={() => handleModeSelect("quiz")}
                   >
                     Generate Quiz
@@ -362,7 +363,7 @@ export default function StudyApp() {
                   <Button
                     size="lg"
                     variant="outline"
-                    className="w-full h-16 text-lg font-medium border-2 bg-transparent"
+                    className="w-full h-16 text-lg font-medium border-2 bg-transparent hover:bg-accent hover:text-accent-foreground"
                     onClick={() => handleModeSelect("flashcards")}
                   >
                     Create Flashcards

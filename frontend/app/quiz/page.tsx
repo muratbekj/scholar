@@ -298,11 +298,13 @@ export default function QuizPage() {
               </span>
               <span>{Math.round(((currentQuestionIndex + 1) / questions.length) * 100)}% Complete</span>
             </div>
-            <div className="w-full bg-muted rounded-full h-2">
+            <div className="w-full bg-muted rounded-full h-3 overflow-hidden shadow-inner">
               <div
-                className="bg-accent h-2 rounded-full transition-all duration-300"
+                className="bg-gradient-to-r from-green-500 via-green-600 to-green-700 h-3 rounded-full transition-all duration-500 ease-out shadow-sm relative overflow-hidden"
                 style={{ width: `${((currentQuestionIndex + 1) / questions.length) * 100}%` }}
-              />
+              >
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_2s_ease-in-out_infinite]" />
+              </div>
             </div>
           </div>
 
