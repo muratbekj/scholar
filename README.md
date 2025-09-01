@@ -54,7 +54,7 @@ Scholar is built with a modern, scalable architecture:
 
 ### Prerequisites
 - **Node.js 18+** and **npm**
-- **Python 3.13+** and **uv** (recommended) or **pip**
+- **Python 3.13+** and **uv**
 - **Ollama** with `nomic-embed-text` model
 
 ### 1. Install Ollama
@@ -72,7 +72,7 @@ cd scholar
 ```bash
 cd backend
 
-# Install dependencies with uv (recommended)
+# Install dependencies with uv
 uv sync
 ```
 
