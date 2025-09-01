@@ -25,21 +25,28 @@
     "directories": {
       "output": "dist"
     },
+    "extraResources": [
+      {
+        "from": "../backend/.venv",
+        "to": "backend/.venv"
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",
       "assets/**/*",
-      "../frontend/out/**/*"
+      "../frontend/out/**/*",
+      "../backend/**/*"
     ],
     "mac": {
       "category": "public.app-category.education",
-      "icon": "assets/icon.icns"
+      "icon": "assets/scholarlogo.png"
     },
     "win": {
-      "icon": "assets/icon.ico"
+      "icon": "assets/scholarlogo.png"
     },
     "linux": {
-      "icon": "assets/icon.png"
+      "icon": "assets/scholarlogo.png"
     }
   }
 }
