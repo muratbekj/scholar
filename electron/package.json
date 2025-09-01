@@ -27,16 +27,18 @@
     },
     "extraResources": [
       {
-        "from": "../backend/.venv",
-        "to": "backend/.venv"
+        "from": "../backend",
+        "to": "backend"
+      },
+      {
+        "from": "../frontend/out",
+        "to": "frontend"
       }
     ],
     "files": [
       "main.js",
       "preload.js",
-      "assets/**/*",
-      "../frontend/out/**/*",
-      "../backend/**/*"
+      "assets/**/*"
     ],
     "mac": {
       "category": "public.app-category.education",
