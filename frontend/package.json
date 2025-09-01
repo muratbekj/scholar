@@ -9,7 +9,7 @@
         "lint": "next lint",
         "electron": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron ../electron/main.js\"",
         "electron:dev": "npm run electron",
-        "build:static": "next build && next export",
+        "build:static": "next build",
         "electron:build": "npm run build:static && electron-builder --config ../electron/package.json"
     },
     "dependencies": {

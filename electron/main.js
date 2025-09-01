@@ -1,10 +1,59 @@
 const { app, BrowserWindow, Menu } = require('electron');
 const path = require('path');
+const { spawn } = require('child_process');
 const isDev = process.env.NODE_ENV === 'development';
+
+let backendProcess = null;
+let mainWindow = null;
+
+// Start the FastAPI backend server
+function startBackend() {
+  const backendPath = isDev ? path.join(__dirname, '../backend') : path.join(process.resourcesPath, 'backend');
+  const pythonPath = isDev ? 'python' : path.join(process.resourcesPath, 'backend/.venv/bin/python' + (process.platform === 'win32' ? '.exe' : ''));
+  
+  console.log('Starting backend server...');
+  console.log('Backend path:', backendPath);
+  console.log('Python path:', pythonPath);
+  
+  backendProcess = spawn(pythonPath, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000'], {
+    cwd: backendPath,
+    stdio: 'pipe'
+  });
+
+  backendProcess.stdout.on('data', (data) => {
+    console.log('Backend stdout:', data.toString());
+  });
+
+  backendProcess.stderr.on('data', (data) => {
+    console.log('Backend stderr:', data.toString());
+  });
+
+  backendProcess.on('close', (code) => {
+    console.log('Backend process exited with code:', code);
+  });
+
+  backendProcess.on('error', (error) => {
+    console.error('Backend process error:', error);
+  });
+
+  // Wait a bit for backend to start
+  return new Promise((resolve) => {
+    setTimeout(resolve, 3000);
+  });
+}
+
+// Stop the backend server
+function stopBackend() {
+  if (backendProcess) {
+    console.log('Stopping backend server...');
+    backendProcess.kill();
+    backendProcess = null;
+  }
+}
 
 function createWindow() {
   // Create the browser window
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     webPreferences: {
@@ -39,7 +88,11 @@ function createWindow() {
 }
 
 // This method will be called when Electron has finished initialization
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Start backend first
+  await startBackend();
+  
+  // Then create window
   createWindow();
 
   // On macOS, re-create window when dock icon is clicked
@@ -52,9 +105,15 @@ app.whenReady().then(() => {
 
 // Quit when all windows are closed, except on macOS
 app.on('window-all-closed', () => {
+  stopBackend();
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Clean up backend when app quits
+app.on('before-quit', () => {
+  stopBackend();
 });
 
 // Security: Prevent new window creation
