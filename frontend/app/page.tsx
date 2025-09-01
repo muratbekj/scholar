@@ -2,7 +2,7 @@
 
 import React from "react"
 import { useState } from "react"
-import { Upload, FileText, Menu, History, Plus, Clock, Trash2, AlertCircle, CheckCircle } from "lucide-react"
+import { Upload, FileText, Menu, History, Plus, Clock, Trash2, AlertCircle, CheckCircle, ChevronDown, ChevronRight } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -31,30 +31,9 @@ export default function StudyApp() {
   const [showHistory, setShowHistory] = useState(false)
   const [uploadResult, setUploadResult] = useState<FileUploadResponse | null>(null)
   const { uploadState, uploadFile, resetUpload } = useFileUpload()
-  const [studySessions, setStudySessions] = useState<StudySession[]>([
-    {
-      id: "1",
-      fileName: "Data Structures Guide.pdf",
-      mode: "qa",
-      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
-      preview: "Discussed binary trees and sorting algorithms",
-    },
-    {
-      id: "2",
-      fileName: "Machine Learning Basics.docx",
-      mode: "quiz",
-      timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000), // 1 day ago
-      preview: "Completed quiz on supervised learning - 85% score",
-    },
-    {
-      id: "3",
-      fileName: "JavaScript Fundamentals.txt",
-      mode: "flashcards",
-      timestamp: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000), // 3 days ago
-      preview: "Reviewed 15 flashcards on closures and promises",
-    },
-  ])
+  const [studySessions, setStudySessions] = useState<StudySession[]>([])
   const [isNavigatingToQA, setIsNavigatingToQA] = useState(false)  // Add navigation state
+  const [showOllamaSetup, setShowOllamaSetup] = useState(false)  // Add Ollama setup toggle state
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault()
@@ -224,51 +203,22 @@ export default function StudyApp() {
             </div>
 
             <ScrollArea className="max-h-96 p-6">
-              {studySessions.length === 0 ? (
-                <div className="text-center py-8">
-                  <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                  <p className="text-muted-foreground">No study sessions yet</p>
+              <div className="text-center py-8">
+                <div className="w-16 h-16 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg className="w-8 h-8 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
                 </div>
-              ) : (
-                <div className="space-y-4 max-h-80 overflow-y-auto pr-2">
-                  {studySessions.map((session) => (
-                    <Card key={session.id} className="p-4 hover:bg-muted/50 transition-colors">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 cursor-pointer" onClick={() => handleLoadSession(session)}>
-                          <div className="flex items-center gap-2 mb-2">
-                            <FileText className="h-4 w-4 text-accent" />
-                            <h3 className="font-medium text-foreground">{session.fileName}</h3>
-                            <span
-                              className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                session.mode === "qa"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : session.mode === "quiz"
-                                    ? "bg-green-100 text-green-800"
-                                    : "bg-purple-100 text-purple-800"
-                              }`}
-                            >
-                              {session.mode === "qa" ? "Q&A" : session.mode === "quiz" ? "Quiz" : "Flashcards"}
-                            </span>
-                          </div>
-                          <p className="text-sm text-muted-foreground mb-2">{session.preview}</p>
-                          <p className="text-xs text-muted-foreground">{formatTimeAgo(session.timestamp)}</p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleDeleteSession(session.id)
-                          }}
-                          className="text-muted-foreground hover:text-destructive"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </Card>
-                  ))}
+                <h3 className="text-lg font-semibold text-foreground mb-2">Study History Coming Soon</h3>
+                <p className="text-muted-foreground mb-3">
+                  We're working on adding study session history to help you track your learning progress.
+                </p>
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                  <p className="text-sm text-orange-800">
+                    <strong>Sorry for the inconvenience!</strong> This feature will be available in a future update.
+                  </p>
                 </div>
-              )}
+              </div>
             </ScrollArea>
           </Card>
         </div>
@@ -286,6 +236,87 @@ export default function StudyApp() {
                   Upload a document to start studying with AI-powered tools
                 </p>
               </div>
+
+              {/* Ollama Setup Toggle */}
+              <Card className="p-4 border border-blue-200">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-between p-0 h-auto hover:bg-transparent"
+                  onClick={() => setShowOllamaSetup(!showOllamaSetup)}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                      <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                    </div>
+                    <span className="text-left">
+                      <div className="font-medium text-blue-900">Have you downloaded Ollama yet?</div>
+                      <div className="text-sm text-blue-700">Required for AI features</div>
+                    </span>
+                  </div>
+                  {showOllamaSetup ? (
+                    <ChevronDown className="h-5 w-5 text-blue-600" />
+                  ) : (
+                    <ChevronRight className="h-5 w-5 text-blue-600" />
+                  )}
+                </Button>
+                
+                {/* Collapsible Ollama Setup Content */}
+                {showOllamaSetup && (
+                  <div className="mt-4 space-y-4 animate-in slide-in-from-top-2 duration-200">
+                    <div className="p-4 bg-blue-50 rounded-lg">
+                      <p className="text-sm text-blue-800 mb-3">
+                        Ollama provides local AI processing for Q&A, quiz generation, and flashcard creation. 
+                        Your documents stay on your device for privacy.
+                      </p>
+                      <Button 
+                        asChild
+                        className="bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        <a 
+                          href="https://ollama.com/" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                          Download Ollama
+                        </a>
+                      </Button>
+                      <p className="text-xs text-blue-600 mt-2">
+                        Or open in your browser:{" "}
+                        <a 
+                          href="https://ollama.com/" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="underline hover:text-blue-800"
+                        >
+                          https://ollama.com/
+                        </a>
+                      </p>
+                    </div>
+                    
+                    {/* Model Installation Instructions */}
+                    <div className="p-4 bg-white rounded-lg border border-blue-200">
+                      <h4 className="text-sm font-semibold text-blue-900 mb-2">After installing Ollama, run these commands in your terminal:</h4>
+                      <div className="space-y-2">
+                        <div className="bg-gray-50 p-3 rounded text-sm font-mono text-gray-800">
+                          ollama pull nomic-embed-text
+                        </div>
+                        <div className="bg-gray-50 p-3 rounded text-sm font-mono text-gray-800">
+                          ollama pull gpt-oss:20b
+                        </div>
+                        <p className="text-xs text-gray-600 mt-2">
+                          Or use a smaller models available on Ollama and your device.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </Card>
 
               {/* File Upload Area */}
               <Card
