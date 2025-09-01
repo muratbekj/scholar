@@ -5,6 +5,7 @@
     "scripts": {
         "dev": "next dev",
         "build": "next build",
+        "postbuild": "node fix-paths.js",
         "start": "next start",
         "lint": "next lint",
         "electron": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && cross-env NODE_ENV=development electron ../electron/main.js\"",
