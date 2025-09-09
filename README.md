@@ -194,6 +194,7 @@ This project is licensed under the Apache License - see the [LICENSE](LICENSE) f
 ## 🙏 Acknowledgments
 
 - **LangChain** for AI/LLM orchestration
+- **FastApi** for backend framework
 - **ChromaDB** for vector storage
 - **Ollama** for local LLM inference
 - **Next.js** for the frontend framework
