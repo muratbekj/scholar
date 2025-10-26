@@ -1,10 +1,11 @@
 # File management API routes
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from typing import List, Optional
 import logging
+import os
 
-from ...models.file import FileUploadResponse, FileInfo, UploadError
+from ...models.file import FileUploadResponse, FileInfo, UploadError, RAGProcessingInfo
 from ...services.document import DocumentService
 from ...services.extractor import DocumentExtractor
 from ...services.rag_pipeline import rag_pipeline_service
@@ -67,12 +68,12 @@ async def upload_file(
             )
             
             # Add RAG processing details to response
-            upload_response.rag_processing = {
-                "processing_time_seconds": result['processing_time_seconds'],
-                "chunking": result['chunking'],
-                "embedding": result['embedding'],
-                "vector_storage": result['vector_storage']
-            }
+            upload_response.rag_processing = RAGProcessingInfo(
+                processing_time_seconds=result['processing_time_seconds'],
+                chunking=result['chunking'],
+                embedding=result['embedding'],
+                vector_storage=result['vector_storage']
+            )
             
         else:
             # Process file without embedding for Quiz/Flashcard modes
@@ -102,12 +103,12 @@ async def upload_file(
             )
             
             # Add basic processing details
-            upload_response.rag_processing = {
-                "processing_time_seconds": result['processing_time_seconds'],
-                "chunking": result['chunking'],
-                "embedding": {"enabled": False, "reason": f"Not needed for {study_mode} mode"},
-                "vector_storage": {"enabled": False, "reason": f"Not needed for {study_mode} mode"}
-            }
+            upload_response.rag_processing = RAGProcessingInfo(
+                processing_time_seconds=result['processing_time_seconds'],
+                chunking=result['chunking'],
+                embedding={"enabled": False, "reason": f"Not needed for {study_mode} mode"},
+                vector_storage={"enabled": False, "reason": f"Not needed for {study_mode} mode"}
+            )
         
         logger.info(f"File uploaded successfully: {file.filename} (mode: {study_mode}, embedding: {enable_embedding})")
         return upload_response
@@ -164,12 +165,12 @@ async def upload_file_with_embedding(
         )
         
         # Add RAG processing details to response
-        upload_response.rag_processing = {
-            "processing_time_seconds": result['processing_time_seconds'],
-            "chunking": result['chunking'],
-            "embedding": result['embedding'],
-            "vector_storage": result['vector_storage']
-        }
+        upload_response.rag_processing = RAGProcessingInfo(
+            processing_time_seconds=result['processing_time_seconds'],
+            chunking=result['chunking'],
+            embedding=result['embedding'],
+            vector_storage=result['vector_storage']
+        )
         
         logger.info(f"File uploaded successfully with explicit embedding control: {file.filename}")
         return upload_response
@@ -325,9 +326,121 @@ async def get_processing_stats():
         logger.error(f"Error getting processing stats: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@router.get("/{file_id}/content")
+async def get_document_content(file_id: str):
+    """
+    Get document content with structure information for highlighting
+    """
+    try:
+        content_data = await document_service.get_document_content_with_structure(file_id)
+        if not content_data:
+            raise HTTPException(status_code=404, detail="Document content not found")
+        
+        return content_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting document content for {file_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/{file_id}/file")
+async def get_document_file(file_id: str):
+    """
+    Get the actual document file (PDF, DOCX, etc.) for viewing
+    """
+    try:
+        logger.info(f"Requesting file: {file_id}")
+        file_info = await document_service.get_file_info(file_id)
+        if not file_info:
+            logger.error(f"File info not found for: {file_id}")
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Construct file path - check uploads directory
+        uploads_dir = "uploads"
+        file_path = os.path.join(uploads_dir, f"{file_id}.pdf")
+        logger.info(f"Trying file path: {file_path}")
+        
+        # Check if PDF exists, otherwise try other formats
+        if not os.path.exists(file_path):
+            # Try other common formats
+            for ext in ['.docx', '.pptx', '.txt']:
+                alt_path = os.path.join(uploads_dir, f"{file_id}{ext}")
+                if os.path.exists(alt_path):
+                    file_path = alt_path
+                    break
+        
+        # If still not found, try with absolute path
+        if not os.path.exists(file_path):
+            # Try with absolute path from current working directory
+            current_dir = os.getcwd()
+            absolute_uploads_dir = os.path.join(current_dir, "uploads")
+            file_path = os.path.join(absolute_uploads_dir, f"{file_id}.pdf")
+            
+            if not os.path.exists(file_path):
+                # Try other formats with absolute path
+                for ext in ['.docx', '.pptx', '.txt']:
+                    alt_path = os.path.join(absolute_uploads_dir, f"{file_id}{ext}")
+                    if os.path.exists(alt_path):
+                        file_path = alt_path
+                        break
+        
+        if not os.path.exists(file_path):
+            logger.error(f"File not found: {file_id}. Tried paths: {uploads_dir}/{file_id}.pdf, {absolute_uploads_dir}/{file_id}.pdf")
+            raise HTTPException(status_code=404, detail=f"File not found on disk: {file_id}")
+        
+        # Determine media type based on file extension
+        file_ext = os.path.splitext(file_path)[1].lower()
+        media_types = {
+            '.pdf': 'application/pdf',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.txt': 'text/plain'
+        }
+        
+        media_type = media_types.get(file_ext, 'application/octet-stream')
+        
+        return FileResponse(
+            path=file_path,
+            media_type=media_type,
+            filename=file_info.filename if hasattr(file_info, 'filename') else f"{file_id}{file_ext}"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting document file for {file_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @router.get("/health")
 async def health_check():
     """
     Health check endpoint
     """
     return {"status": "healthy", "service": "file-upload-with-conditional-rag"}
+
+@router.get("/test-file/{file_id}")
+async def test_file_exists(file_id: str):
+    """
+    Test endpoint to check if a file exists
+    """
+    try:
+        # Check relative path
+        relative_path = os.path.join("uploads", f"{file_id}.pdf")
+        relative_exists = os.path.exists(relative_path)
+        
+        # Check absolute path
+        current_dir = os.getcwd()
+        absolute_path = os.path.join(current_dir, "uploads", f"{file_id}.pdf")
+        absolute_exists = os.path.exists(absolute_path)
+        
+        return {
+            "file_id": file_id,
+            "current_dir": current_dir,
+            "relative_path": relative_path,
+            "relative_exists": relative_exists,
+            "absolute_path": absolute_path,
+            "absolute_exists": absolute_exists
+        }
+    except Exception as e:
+        return {"error": str(e)}
