@@ -22,11 +22,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(files.router)
-app.include_router(qa.router)
-app.include_router(quiz.router)
-app.include_router(flashcards.router)
+# Include routers with /api prefix
+app.include_router(files.router, prefix="/api")
+app.include_router(qa.router, prefix="/api")
+app.include_router(quiz.router, prefix="/api")
+app.include_router(flashcards.router, prefix="/api")
 
 @app.get("/")
 async def root():
