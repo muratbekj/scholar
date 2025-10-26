@@ -110,14 +110,46 @@ class DocumentService:
         metadata = extracted_data.get('metadata', {})
         format_type = extracted_data.get('format', 'unknown')
         
-        # Combine all text content
+        # Combine all text content and track positions
         full_text = ""
+        pages = []
+        sections = []
+        current_index = 0
+        
         if format_type == 'pdf':
-            full_text = '\n\n'.join([page['content'] for page in content])
+            for i, page in enumerate(content):
+                page_text = page['content']
+                pages.append({
+                    'page_number': i + 1,
+                    'start_index': current_index,
+                    'end_index': current_index + len(page_text),
+                    'content': page_text
+                })
+                full_text += page_text + '\n\n'
+                current_index += len(page_text) + 2  # +2 for \n\n
         elif format_type in ['word', 'text']:
-            full_text = '\n\n'.join([para['content'] for para in content])
+            for i, para in enumerate(content):
+                para_text = para['content']
+                # Try to identify sections by looking for headings
+                if para_text.strip().endswith(':') or para_text.isupper():
+                    sections.append({
+                        'title': para_text.strip(),
+                        'start_index': current_index,
+                        'end_index': current_index + len(para_text)
+                    })
+                full_text += para_text + '\n\n'
+                current_index += len(para_text) + 2
         elif format_type == 'powerpoint':
-            full_text = '\n\n'.join([slide['content'] for slide in content])
+            for i, slide in enumerate(content):
+                slide_text = slide['content']
+                pages.append({
+                    'page_number': i + 1,
+                    'start_index': current_index,
+                    'end_index': current_index + len(slide_text),
+                    'content': slide_text
+                })
+                full_text += slide_text + '\n\n'
+                current_index += len(slide_text) + 2
         
         return {
             'full_text': full_text,
@@ -129,6 +161,12 @@ class DocumentService:
                 'total_items': len(content),
                 'item_type': 'pages' if format_type == 'pdf' else 
                             'slides' if format_type == 'powerpoint' else 'paragraphs'
+            },
+            'document_structure': {
+                'pages': pages,
+                'sections': sections,
+                'total_length': len(full_text),
+                'format_type': format_type
             }
         }
     
@@ -241,3 +279,34 @@ class DocumentService:
     def get_supported_formats(self) -> List[str]:
         """Get list of supported file formats"""
         return list(DocumentExtractor.SUPPORTED_FORMATS.keys())
+    
+    async def get_document_content_with_structure(self, file_id: str) -> Optional[Dict[str, Any]]:
+        """Get document content with structure information for highlighting"""
+        try:
+            file_info = await self.get_file_info(file_id)
+            if not file_info or not file_info.content_summary:
+                return None
+            
+            content_summary = file_info.content_summary
+            document_structure = content_summary.get('document_structure', {})
+            
+            # Include bounding box data for PDF files
+            bounding_boxes = {}
+            if content_summary.get('format') == 'pdf' and 'content' in content_summary:
+                # Extract bounding box data from PyMuPDF extraction
+                for page_data in content_summary.get('content', []):
+                    if 'text_blocks' in page_data:
+                        bounding_boxes[page_data['page']] = page_data['text_blocks']
+            
+            return {
+                'file_id': file_id,
+                'filename': file_info.filename if hasattr(file_info, 'filename') else file_id,
+                'full_text': content_summary.get('full_text', ''),
+                'document_structure': document_structure,
+                'format': content_summary.get('format', 'unknown'),
+                'total_length': content_summary.get('character_count', 0),
+                'bounding_boxes': bounding_boxes  # PyMuPDF bounding box data
+            }
+        except Exception as e:
+            logger.error(f"Error getting document content with structure for {file_id}: {str(e)}")
+            return None

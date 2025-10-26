@@ -3,7 +3,7 @@ import os
 import tempfile
 from typing import Dict, Any, Optional
 from pathlib import Path
-import PyPDF2
+import fitz  # PyMuPDF
 from docx import Document
 # TODO: install python-pptx for PowerPoint support
 # from pptx import Presentation
@@ -52,33 +52,62 @@ class DocumentExtractor:
     
     @staticmethod
     def _extract_pdf(file_path: str) -> Dict[str, Any]:
-        """Extract text from PDF file"""
+        """Extract text from PDF file using PyMuPDF for better performance and bounding box support"""
         text_content = []
         metadata = {}
         
         try:
-            with open(file_path, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
+            # Open PDF with PyMuPDF
+            pdf_document = fitz.open(file_path)
+            
+            # Extract metadata
+            pdf_metadata = pdf_document.metadata
+            if pdf_metadata:
+                metadata = {
+                    'title': pdf_metadata.get('title', ''),
+                    'author': pdf_metadata.get('author', ''),
+                    'subject': pdf_metadata.get('subject', ''),
+                    'creator': pdf_metadata.get('creator', ''),
+                    'producer': pdf_metadata.get('producer', ''),
+                    'pages': pdf_document.page_count
+                }
+            
+            # Extract text from each page with bounding box information
+            for page_num in range(pdf_document.page_count):
+                page = pdf_document[page_num]
                 
-                # Extract metadata
-                if pdf_reader.metadata:
-                    metadata = {
-                        'title': pdf_reader.metadata.get('/Title', ''),
-                        'author': pdf_reader.metadata.get('/Author', ''),
-                        'subject': pdf_reader.metadata.get('/Subject', ''),
-                        'creator': pdf_reader.metadata.get('/Creator', ''),
-                        'producer': pdf_reader.metadata.get('/Producer', ''),
-                        'pages': len(pdf_reader.pages)
-                    }
+                # Get text blocks with bounding boxes for highlighting support
+                text_blocks = page.get_text("dict")
                 
-                # Extract text from each page
-                for page_num, page in enumerate(pdf_reader.pages):
-                    page_text = page.extract_text()
-                    if page_text.strip():
-                        text_content.append({
-                            'page': page_num + 1,
-                            'content': page_text.strip()
-                        })
+                page_text_content = []
+                full_page_text = ""
+                
+                # Process each text block
+                for block in text_blocks["blocks"]:
+                    if "lines" in block:  # Text block
+                        for line in block["lines"]:
+                            for span in line["spans"]:
+                                if span["text"].strip():
+                                    # Store text with bounding box for highlighting
+                                    text_item = {
+                                        'text': span["text"],
+                                        'bbox': span["bbox"],  # [x0, y0, x1, y1]
+                                        'font': span["font"],
+                                        'size': span["size"],
+                                        'flags': span["flags"]
+                                    }
+                                    page_text_content.append(text_item)
+                                    full_page_text += span["text"] + " "
+                
+                if full_page_text.strip():
+                    text_content.append({
+                        'page': page_num + 1,
+                        'content': full_page_text.strip(),
+                        'text_blocks': page_text_content,  # For highlighting support
+                        'page_bbox': page.rect  # Page dimensions
+                    })
+            
+            pdf_document.close()
                 
         except Exception as e:
             logger.error(f"Error reading PDF file: {str(e)}")
