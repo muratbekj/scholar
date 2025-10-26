@@ -26,6 +26,17 @@ export interface QARequest {
   search_k?: number;
 }
 
+export interface SourceReference {
+  id: string;
+  text: string;
+  start_index: number;
+  end_index: number;
+  page_number?: number;
+  section_title?: string;
+  confidence: number;
+  chunk_id?: string;
+}
+
 export interface QAResponse {
   answer: string;
   session_id: string;
@@ -34,6 +45,7 @@ export interface QAResponse {
   rag_context?: any;
   processing_time: number;
   confidence_score?: number;
+  sources?: SourceReference[];
 }
 
 export interface QASessionCreate {
@@ -320,6 +332,53 @@ class ApiService {
 
   async flashcardHealthCheck(): Promise<{ status: string; service: string; llm_integration: string }> {
     return this.request<{ status: string; service: string; llm_integration: string }>('/flashcards/health');
+  }
+
+  // Document Content API Methods
+  async getDocumentContent(fileId: string): Promise<{
+    file_id: string;
+    filename: string;
+    full_text: string;
+    document_structure: {
+      pages: Array<{
+        page_number: number;
+        start_index: number;
+        end_index: number;
+        content?: string;
+      }>;
+      sections: Array<{
+        title: string;
+        start_index: number;
+        end_index: number;
+      }>;
+      total_length: number;
+      format_type: string;
+    };
+    format: string;
+    total_length: number;
+  }> {
+    return this.request<{
+      file_id: string;
+      filename: string;
+      full_text: string;
+      document_structure: {
+        pages: Array<{
+          page_number: number;
+          start_index: number;
+          end_index: number;
+          content?: string;
+        }>;
+        sections: Array<{
+          title: string;
+          start_index: number;
+          end_index: number;
+        }>;
+        total_length: number;
+        format_type: string;
+      };
+      format: string;
+      total_length: number;
+    }>(`/files/${fileId}/content`);
   }
 }
 

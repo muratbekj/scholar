@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect, useRef } from "react"
-import { Menu, History, Plus, ArrowLeft, AlertCircle, Bot, FileText } from "lucide-react"
+import { Menu, History, Plus, ArrowLeft, AlertCircle, Bot, FileText, Eye, EyeOff } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Loading } from "@/components/ui/loading"
@@ -10,8 +10,12 @@ import { ChatInput } from "@/components/chat/ChatInput"
 import { SessionHistory } from "@/components/chat/SessionHistory"
 import { useQASession } from "@/lib/hooks/useQASession"
 import { useSessionHistory } from "@/lib/hooks/useSessionHistory"
+import { useHighlightManager } from "@/lib/hooks/useHighlightManager"
+import { useDocumentViewer } from "@/lib/hooks/useDocumentViewer"
 import { useToast } from "@/components/ui/toast"
-import { QAMessage } from "@/lib/api"
+import { QAMessage, SourceReference } from "@/lib/api"
+import { DocumentViewer } from "@/components/document/DocumentViewer"
+import { SourceReferences } from "@/components/document/SourceReference"
 import Link from "next/link"
 
 export default function QAPage() {
@@ -20,8 +24,27 @@ export default function QAPage() {
   const [fileName, setFileName] = useState<string>("")
   const [fileId, setFileId] = useState<string>("")
   const [isInitializing, setIsInitializing] = useState(true)  // Add initial loading state
+  const [showDocumentViewer, setShowDocumentViewer] = useState(false)
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const sessionCreatedRef = useRef(false)
+
+  // Use the new hooks for highlight and document management
+  const {
+    highlights,
+    highlightedSourceIds,
+    addHighlight,
+    removeHighlight,
+    clearHighlights,
+    toggleHighlight,
+    isHighlighted
+  } = useHighlightManager()
+
+  const {
+    documentContent,
+    isLoading: isDocumentLoading,
+    error: documentError,
+    loadDocument
+  } = useDocumentViewer()
 
   const { sessionState, createSession, loadSession, askQuestion, deleteSession, clearError, resetSession } = useQASession()
   const { historyState, removeSessionFromList, addSessionToList } = useSessionHistory()
@@ -70,6 +93,13 @@ export default function QAPage() {
       setIsInitializing(false)  // Hide initial loading state if no file data
     }
   }, [createSession, addSessionToList])
+
+  // Load document when fileId changes
+  useEffect(() => {
+    if (fileId) {
+      loadDocument(fileId)
+    }
+  }, [fileId, loadDocument])
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -170,6 +200,14 @@ export default function QAPage() {
     clearError()
   }
 
+  const handleSourceClick = (source: SourceReference) => {
+    toggleHighlight(source)
+  }
+
+  const handleClearHighlights = () => {
+    clearHighlights()
+  }
+
   // Show initial loading state
   if (isInitializing) {
     return (
@@ -233,6 +271,18 @@ export default function QAPage() {
               </div>
             )}
           </div>
+          
+          {/* Mobile Document Viewer Toggle */}
+          <div className="lg:hidden">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowDocumentViewer(!showDocumentViewer)}
+              className="p-2"
+            >
+              {showDocumentViewer ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -274,43 +324,63 @@ export default function QAPage() {
         </div>
       )}
 
-      {/* Main Content */}
-      <main className="flex flex-col flex-1 min-h-0">
-        {/* Chat Messages */}
-        <ScrollArea className="flex-1 p-4 pb-0" ref={scrollAreaRef}>
-          <div className="max-w-4xl mx-auto space-y-4 pb-4">
-            {sessionState.session?.messages && sessionState.session.messages.length > 0 ? (
-              sessionState.session.messages.map((message) => (
-                <Message 
-                  key={message.id}
-                  message={message} 
-                  isUser={message.type === "user"} 
-                />
-              ))
-            ) : (
-              <div className="text-center py-8">
-                <Bot className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-foreground mb-2">
-                  Welcome to Q&A Chat!
-                </h3>
-                <p className="text-muted-foreground">
-                  Ask me any questions about your document and I'll help you understand it better.
-                </p>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
+      {/* Main Content - Split Screen Layout */}
+      <main className="flex flex-1 min-h-0">
+        {/* Left Side - Chat Interface (60% on desktop, full width on mobile) */}
+        <div className={`flex flex-col ${showDocumentViewer ? 'hidden lg:flex lg:w-3/5' : 'w-full lg:w-3/5'} border-r border-border`}>
+          <ScrollArea className="flex-1 p-4 pb-0" ref={scrollAreaRef}>
+            <div className="max-w-4xl mx-auto space-y-4 pb-4">
+              {sessionState.session?.messages && sessionState.session.messages.length > 0 ? (
+                sessionState.session.messages.map((message) => (
+                  <Message 
+                    key={message.id}
+                    message={message} 
+                    isUser={message.type === "user"}
+                    onSourceClick={handleSourceClick}
+                    highlightedSourceIds={highlightedSourceIds}
+                  />
+                ))
+              ) : (
+                <div className="text-center py-8">
+                  <Bot className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-foreground mb-2">
+                    Welcome to Q&A Chat!
+                  </h3>
+                  <p className="text-muted-foreground">
+                    Ask me any questions about your document and I'll help you understand it better.
+                  </p>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Right Side - Document Viewer (40% on desktop, full width on mobile when toggled) */}
+        <div className={`${showDocumentViewer ? 'flex' : 'hidden lg:flex'} flex-col ${showDocumentViewer ? 'w-full lg:w-2/5' : 'w-2/5'}`}>
+          <DocumentViewer
+            fileId={fileId}
+            filename={fileName}
+            highlights={highlights}
+            onSourceClick={handleSourceClick}
+            onClearHighlights={handleClearHighlights}
+          />
+        </div>
       </main>
 
-      {/* Sticky Chat Input */}
+      {/* Sticky Chat Input - Responsive */}
       <div className="sticky bottom-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t border-border">
-        <div className="p-4">
-          <ChatInput
-            onSendMessage={handleSendMessage}
-            isLoading={sessionState.isAsking}
-            disabled={!sessionState.session}
-            placeholder="Ask a question about your document..."
-          />
+        <div className="flex">
+          <div className={`${showDocumentViewer ? 'hidden lg:block lg:w-3/5' : 'w-full lg:w-3/5'} p-4`}>
+            <ChatInput
+              onSendMessage={handleSendMessage}
+              isLoading={sessionState.isAsking}
+              disabled={!sessionState.session}
+              placeholder="Ask a question about your document..."
+            />
+          </div>
+          <div className={`${showDocumentViewer ? 'w-full lg:w-2/5' : 'hidden lg:block lg:w-2/5'} border-l border-border`}>
+            {/* Document viewer controls can go here later */}
+          </div>
         </div>
       </div>
 
