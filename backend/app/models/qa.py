@@ -30,6 +30,17 @@ class QARequest(BaseModel):
     use_rag: bool = True
     search_k: int = 5
 
+class SourceReference(BaseModel):
+    """Model for source reference with position information"""
+    id: str
+    text: str
+    start_index: int
+    end_index: int
+    page_number: Optional[int] = None
+    section_title: Optional[str] = None
+    confidence: float
+    chunk_id: Optional[str] = None
+
 class QAResponse(BaseModel):
     """Model for QA response"""
     answer: str
@@ -39,6 +50,7 @@ class QAResponse(BaseModel):
     rag_context: Optional[Dict[str, Any]] = None
     processing_time: float
     confidence_score: Optional[float] = None
+    sources: Optional[List[SourceReference]] = None
 
 class RAGContext(BaseModel):
     """Model for RAG context information"""
@@ -47,6 +59,7 @@ class RAGContext(BaseModel):
     source_file: str
     chunk_count: int
     search_query: str
+    source_positions: Optional[List[Dict[str, Any]]] = None
 
 class QASessionCreate(BaseModel):
     """Model for creating a new QA session"""
@@ -61,3 +74,10 @@ class QASessionResponse(BaseModel):
     created_at: datetime
     message_count: int
     last_activity: Optional[datetime] = None
+
+class DocumentStructure(BaseModel):
+    """Model for document structure information"""
+    pages: List[Dict[str, Any]] = []  # [{"page_number": 1, "start_index": 0, "end_index": 1500}]
+    sections: List[Dict[str, Any]] = []  # [{"title": "Introduction", "start_index": 0, "end_index": 500}]
+    total_length: int
+    format_type: str

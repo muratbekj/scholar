@@ -102,6 +102,11 @@ class QAService:
             
             logger.info(f"Generated answer for session {session.session_id} in {processing_time:.2f}s")
             
+            # Extract source references from RAG context
+            source_references = None
+            if rag_context and rag_context.get('source_positions'):
+                source_references = rag_context['source_positions']
+            
             return QAResponse(
                 answer=answer,
                 session_id=session.session_id,
@@ -109,7 +114,8 @@ class QAService:
                 timestamp=assistant_message.timestamp,
                 rag_context=rag_context,
                 processing_time=processing_time,
-                confidence_score=self._calculate_confidence_score(rag_context) if rag_context else None
+                confidence_score=self._calculate_confidence_score(rag_context) if rag_context else None,
+                sources=source_references
             )
             
         except Exception as e:
@@ -184,6 +190,16 @@ class QAService:
             # Generate answer based on context
             answer = await self._generate_contextual_answer(question, relevant_chunks, similarity_scores)
             
+            # Generate source references with positions
+            source_references = await self._generate_source_references(
+                relevant_chunks, file_id, question
+            )
+            
+            # Log source reference generation results
+            logger.info(f"Generated {len(source_references)} source references for question: {question[:50]}...")
+            for i, ref in enumerate(source_references):
+                logger.debug(f"Source {i}: start={ref.get('start_index', 'N/A')}, end={ref.get('end_index', 'N/A')}, confidence={ref.get('confidence', 'N/A')}")
+            
             # Prepare RAG context
             rag_context = {
                 'relevant_chunks': relevant_chunks,
@@ -191,7 +207,8 @@ class QAService:
                 'source_file': file_id,
                 'chunk_count': len(relevant_chunks),
                 'search_query': question,
-                'search_results_count': len(search_result['results'])
+                'search_results_count': len(search_result['results']),
+                'source_positions': source_references
             }
             
             return answer, rag_context
@@ -249,6 +266,141 @@ class QAService:
         
         # Normalize to 0-1 range
         return min(max(avg_score, 0.0), 1.0)
+    
+    async def _generate_source_references(self, relevant_chunks: List[Dict[str, Any]], 
+                                        file_id: str, question: str) -> List[Dict[str, Any]]:
+        """Generate source references with position information"""
+        try:
+            # Get document content with structure
+            doc_content = await self.document_service.get_document_content_with_structure(file_id)
+            if not doc_content:
+                return []
+            
+            full_text = doc_content.get('full_text', '')
+            document_structure = doc_content.get('document_structure', {})
+            pages = document_structure.get('pages', [])
+            sections = document_structure.get('sections', [])
+            
+            source_references = []
+            
+            for i, chunk in enumerate(relevant_chunks):
+                chunk_content = chunk['content']
+                chunk_id = chunk.get('id', f'chunk_{i}')
+                
+                # Find the position of this chunk in the full document with improved matching
+                start_index, end_index = self._find_text_position(full_text, chunk_content)
+                
+                if start_index != -1:
+                    
+                    # Determine page number
+                    page_number = None
+                    for page in pages:
+                        if start_index >= page['start_index'] and start_index <= page['end_index']:
+                            page_number = page['page_number']
+                            break
+                    
+                    # Determine section
+                    section_title = None
+                    for section in sections:
+                        if start_index >= section['start_index'] and start_index <= section['end_index']:
+                            section_title = section['title']
+                            break
+                    
+                    # Calculate confidence based on similarity score
+                    confidence = chunk.get('similarity_score', 0.8)
+                    
+                    source_ref = {
+                        'id': f'source_{i}_{chunk_id}',
+                        'text': chunk_content[:200] + '...' if len(chunk_content) > 200 else chunk_content,
+                        'start_index': start_index,
+                        'end_index': end_index,
+                        'page_number': page_number,
+                        'section_title': section_title,
+                        'confidence': confidence,
+                        'chunk_id': chunk_id
+                    }
+                    
+                    source_references.append(source_ref)
+            
+            return source_references
+            
+        except Exception as e:
+            logger.error(f"Error generating source references: {str(e)}")
+            return []
+    
+    def _find_text_position(self, full_text: str, chunk_content: str) -> tuple[int, int]:
+        """Find text position with improved matching and validation"""
+        try:
+            # Try exact match first
+            start_index = full_text.find(chunk_content)
+            if start_index != -1:
+                end_index = start_index + len(chunk_content)
+                # Validate the match
+                if self._validate_text_match(chunk_content, full_text[start_index:end_index]):
+                    logger.debug(f"Exact match found at position {start_index}")
+                    return start_index, end_index
+            
+            # Try normalized matching (remove extra whitespace)
+            normalized_chunk = ' '.join(chunk_content.split())
+            normalized_full = ' '.join(full_text.split())
+            start_index = normalized_full.find(normalized_chunk)
+            if start_index != -1:
+                end_index = start_index + len(normalized_chunk)
+                logger.debug(f"Normalized match found at position {start_index}")
+                return start_index, end_index
+            
+            # Try fuzzy matching with decreasing word counts
+            chunk_words = chunk_content.split()
+            for word_count in range(min(20, len(chunk_words)), 5, -1):
+                partial_text = ' '.join(chunk_words[:word_count])
+                start_index = full_text.find(partial_text)
+                if start_index != -1:
+                    end_index = start_index + len(partial_text)
+                    # Validate partial match
+                    if self._validate_text_match(partial_text, full_text[start_index:end_index]):
+                        logger.debug(f"Partial match found at position {start_index} with {word_count} words")
+                        return start_index, end_index
+            
+            # Try case-insensitive matching
+            start_index = full_text.lower().find(chunk_content.lower())
+            if start_index != -1:
+                end_index = start_index + len(chunk_content)
+                logger.debug(f"Case-insensitive match found at position {start_index}")
+                return start_index, end_index
+            
+            logger.warning(f"No match found for chunk: {chunk_content[:100]}...")
+            return -1, -1
+            
+        except Exception as e:
+            logger.error(f"Error in text position finding: {str(e)}")
+            return -1, -1
+    
+    def _validate_text_match(self, original: str, found: str) -> bool:
+        """Validate that found text is similar to original"""
+        try:
+            # Simple similarity check - can be improved with more sophisticated algorithms
+            if not found or not original:
+                return False
+            
+            # Remove extra whitespace for comparison
+            orig_clean = ' '.join(original.split())
+            found_clean = ' '.join(found.split())
+            
+            # Check if found text contains most of the original text
+            if len(found_clean) < len(orig_clean) * 0.8:
+                return False
+            
+            # Check if the beginning matches
+            min_length = min(len(orig_clean), len(found_clean))
+            if min_length > 0:
+                similarity = sum(1 for a, b in zip(orig_clean[:min_length], found_clean[:min_length]) if a == b) / min_length
+                return similarity >= 0.8
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error validating text match: {str(e)}")
+            return False
     
     async def get_session(self, session_id: str) -> Optional[QASession]:
         """Get QA session by ID"""
