@@ -2,14 +2,17 @@ import React from 'react';
 import { User, Bot, Clock } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { QAMessage } from '@/lib/api';
+import { QAMessage, SourceReference } from '@/lib/api';
+import { SourceReferences } from '@/components/document/SourceReference';
 
 interface MessageProps {
   message: QAMessage;
   isUser: boolean;
+  onSourceClick?: (source: SourceReference) => void;
+  highlightedSourceIds?: string[];
 }
 
-export const Message: React.FC<MessageProps> = ({ message, isUser }) => {
+export const Message: React.FC<MessageProps> = ({ message, isUser, onSourceClick, highlightedSourceIds = [] }) => {
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -67,11 +70,19 @@ export const Message: React.FC<MessageProps> = ({ message, isUser }) => {
           {/* Show sources for assistant messages */}
           {!isUser && message.metadata?.rag_context && (
             <div className="mt-3 pt-3 border-t border-border/50">
-              <p className="text-xs text-muted-foreground mb-1">Sources:</p>
+              <p className="text-xs text-muted-foreground mb-2">Sources:</p>
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">
                   • {message.metadata.rag_context.chunk_count} relevant sections found
                 </p>
+                {message.metadata.rag_context.source_positions && onSourceClick && (
+                  <SourceReferences
+                    sources={message.metadata.rag_context.source_positions}
+                    onSourceClick={onSourceClick}
+                    highlightedSourceIds={highlightedSourceIds}
+                    className="mt-2"
+                  />
+                )}
               </div>
             </div>
           )}
