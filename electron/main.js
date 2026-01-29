@@ -343,19 +343,21 @@ function logAppStructure() {
 
 // This method will be called when Electron has finished initialization
 app.whenReady().then(async () => {
-  console.log('Electron app is ready, starting backend...');
+  console.log('Electron app is ready');
   
   // Log app structure for debugging
   logAppStructure();
   
   try {
-    // Start backend first
-    await startBackend();
-    console.log('Backend started successfully');
-    
-    // Start frontend server
-    await startFrontendServer();
-    console.log('Frontend server started successfully');
+    if (!isDev) {
+      // Start backend first (production)
+      await startBackend();
+      console.log('Backend started successfully');
+      
+      // Start frontend server (production)
+      await startFrontendServer();
+      console.log('Frontend server started successfully');
+    }
     
     // Then create window
     createWindow();

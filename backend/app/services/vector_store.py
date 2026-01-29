@@ -1,5 +1,5 @@
 # Vector store service for storing and retrieving embeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from typing import List, Dict, Any, Optional, Tuple
 import logging
