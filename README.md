@@ -89,7 +89,7 @@ npm install
 cd electron
 
 # Install dependencies
-npm install
+bun install
 ```
 
 ## 🚀 Usage
@@ -99,10 +99,10 @@ npm install
 #### Development Mode
 ```bash
 # Terminal 1: Start backend
-cd backend && uvicorn app.main:app --reload --port 8000
+cd backend && uv run uvicorn app.main:app --reload
 
 # Terminal 2: Start frontend
-cd frontend && npm run electron:dev
+cd frontend && bun run electron:dev
 ```
 
 ### Using Scholar
