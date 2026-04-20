@@ -244,27 +244,114 @@ Ask a question about an uploaded document using RAG.
 {
   "question": "What is machine learning?",
   "file_id": "f137978b-951c-4e27-ae27-a32cca37b184",
-  "session_id": "optional_session_id"
+  "session_id": "optional_session_id",
+  "generation_mode": "standard"
 }
 ```
 
-#### Response Example
+`generation_mode` accepts `standard` or `reasoning_gap`.
+
+#### Response Example: pending reflective gate
 
 ```json
 {
-  "answer": "Machine learning is a subset of artificial intelligence that enables computers to learn and improve from experience without being explicitly programmed...",
-  "question": "What is machine learning?",
-  "file_id": "f137978b-951c-4e27-ae27-a32cca37b184",
+  "answer": "Before I reveal the full answer, write 1-2 sentences about what you think the document supports.",
   "session_id": "qa_session_123",
-  "processing_time": 2.5,
-  "sources": [
+  "message_id": "msg_2",
+  "response_state": "pending_reflection",
+  "reflection_state": "required",
+  "pending_question_id": "pending_123",
+  "generation_mode": "standard",
+  "reflection_prompt": "Before I reveal the full answer...",
+  "visible_cue": "Machine learning systems improve when they train on labeled examples.",
+  "hidden_evidence_count": 2,
+  "visible_evidence_refs": [
     {
-      "content": "Machine learning is a subset of AI...",
-      "similarity_score": 0.95
+      "chunk_id": "chunk_5",
+      "score": 0.95,
+      "support_tier": "high",
+      "score_band": "high"
     }
-  ]
+  ],
+  "processing_time": 1.2
 }
 ```
+
+#### Submit Reflection
+
+**POST** `/qa/reflect`
+
+```json
+{
+  "session_id": "qa_session_123",
+  "pending_question_id": "pending_123",
+  "reflection": "I think the document argues that labels give the model a reliable signal."
+}
+```
+
+Reflection validation ( **`400`** if unmet): whitespace-only is rejected; the text must be at least **8 words**. It must also tie to the pending question, visible cue, or start of the retrieved chunk: either **two** meaningful token overlaps (4+ chars, high-frequency words excluded) or **one** overlap plus at least **10** words total (inflections like *labels* / *labeled* count via a short prefix match). Generic rambling with no connection still fails.
+
+When the LLM is enabled, the **visible cue** for `pending_reflection` is generated with instructions to quote relevant passage without summarizing the direct answer (e.g. omit resolving facts the question asks for). With `use_llm=false`, the cue is a short verbatim slice of the chunk only (weaker anti-leak guarantee).
+
+When the critic’s label disagrees with the retrieval heuristic on a sentence, the backend logs `critic_heuristic_disagreement` (index, levels, sentence preview) for auditing dual-agent behavior.
+
+#### Response Example: completed answer with audit metadata
+
+```json
+{
+  "answer": "Based on the document, labeled examples provide the training signal that supports later generalization.",
+  "session_id": "qa_session_123",
+  "message_id": "msg_3",
+  "response_state": "answered",
+  "reflection_state": "submitted",
+  "intuition_text": "I think the document argues that labels give the model a reliable signal.",
+  "generation_mode": "standard",
+  "processing_time": 2.5,
+  "answer_segments": [
+    {
+      "text": "Based on the document, labeled examples provide the training signal that supports later generalization.",
+      "support_level": "grounded",
+      "support_tier": "direct_citation",
+      "support_label_ui": "Direct citation",
+      "source_match_percent": 88,
+      "evidence_refs": [
+        {
+          "chunk_id": "chunk_5",
+          "score": 0.95,
+          "support_tier": "high",
+          "score_band": "high"
+        }
+      ]
+    }
+  ],
+  "audit_summary": {
+    "summary": "1 grounded, 0 inferred, 0 weak-support segment(s).",
+    "source_links": [
+      {
+        "excerpt": "Machine learning systems improve when they train on labeled examples.",
+        "page_number": null,
+        "chunk_id": "chunk_5",
+        "segment_index": 0,
+        "support_level": "grounded"
+      }
+    ]
+  }
+}
+```
+
+`intuition_text` echoes the learner’s reflection from **`POST /qa/reflect`** so the client can show **human intuition vs model answer** side by side. `audit_summary.source_links` lists **grounded** spans with excerpt and optional **page** / **chunk_id** for verification (e.g. jump-to-page in a PDF viewer).
+
+**Answer segment fields (transparency / heatmap)**
+
+| Field | Meaning |
+|-------|--------|
+| `support_level` | `grounded` \| `inferred` \| `weak_support` — machine label after retrieval alignment and (when LLM is enabled) a **second-pass critic** on the same local model. The critic may internally use a `statistical_shortcut` notion (treated as `weak_support`) when the answer is not semantically anchored in the evidence. |
+| `support_tier` | Stable slug: `direct_citation`, `inference`, `weak_filler` — maps to UI green / yellow / red styling. |
+| `support_label_ui` | Short human-readable tier for tooltips: e.g. “Direct citation”, “Logical inference”, “Weakly supported (possible filler)”. |
+| `source_match_percent` | Integer **0–100** heuristic: combines tier anchor (~62%) with the strongest retrieval score on linked evidence (~38%). **Not** a calibrated probability—use for bands and comparison, not guarantees. |
+| `evidence_refs` | Chunk id, excerpt, optional `page_number`, and retrieval `score` / `score_band`. |
+
+When `generation_mode` is `reasoning_gap`, the completed response also includes `gap_steps` with ordered prompts, placeholders, rubric hints, and evidence references.
 
 ### Create QA Session
 
@@ -356,34 +443,31 @@ Generate a quiz from an uploaded document.
   "filename": "document.pdf",
   "num_questions": 10,
   "difficulty": "medium",
-  "question_types": ["multiple_choice", "true_false"]
+  "question_types": ["multiple_choice", "true_false"],
+  "mode": "standard"
 }
 ```
+
+`mode` accepts `standard`, `reasoning_gap`, or `ai_oversight`.
+
+**Grading for `reasoning_gap` and `ai_oversight`:** When the quiz service runs with LLM enabled, each submitted short answer can be scored with a **model judge** (equivalent conceptual bridges for gaps; valid critique plus evidence anchoring for oversight). If the LLM is off or the judge call fails, scoring falls back to **deterministic heuristics** (keyword overlap, excerpt overlap, and simple citation markers). `question_results` always includes `review_note` and often `review_details` for the learner.
+
+- **Reasoning gap — wrong answer:** `review_details` adds the **document logic path** (source sentence from metadata, rubric lines, gap steps) so feedback is not only “incorrect.”
+- **AI oversight — human agency:** Critiques that cite a **specific page** (e.g. `page 5`, `p.12`) can earn a **score boost** and `human_agency_bonus_applied: true` on that item; aggregate feedback may mention how many responses showed that habit.
 
 #### Response Example
 
 ```json
 {
   "quiz_id": "quiz_123",
+  "title": "Reasoning Gap Quiz on document.pdf",
   "file_id": "f137978b-951c-4e27-ae27-a32cca37b184",
   "filename": "document.pdf",
-  "num_questions": 10,
+  "total_questions": 10,
+  "total_points": 12,
   "difficulty": "medium",
-  "processing_time": 8.5,
-  "questions": [
-    {
-      "question_id": "q1",
-      "question": "What is machine learning?",
-      "options": [
-        "A subset of artificial intelligence",
-        "A programming language",
-        "A database system",
-        "A web framework"
-      ],
-      "correct_answer": 0,
-      "explanation": "Machine learning is indeed a subset of artificial intelligence..."
-    }
-  ]
+  "mode": "reasoning_gap",
+  "processing_time": 8.5
 }
 ```
 
@@ -413,13 +497,27 @@ Get quiz questions without correct answers (for user display).
 ```json
 [
   {
-    "question_id": "q1",
-    "question": "What is machine learning?",
-    "options": [
-      "A subset of artificial intelligence",
-      "A programming language",
-      "A database system",
-      "A web framework"
+    "id": "q1",
+    "question": "Complete the missing step in the reasoning from the document.",
+    "mode": "reasoning_gap",
+    "gap_prompt": "Machine learning models improve as they process more _____ training examples.",
+    "gap_steps": [
+      {
+        "order": 1,
+        "prompt": "Machine learning models improve as they process more _____ training examples.",
+        "placeholder": "Fill the missing concept",
+        "rubric_hint": "Recover the missing bridge from the source sentence, not outside intuition."
+      }
+    ],
+    "grading_rubric": [
+      "Names the missing concept or causal link from the document.",
+      "Stays within the evidence instead of adding outside claims."
+    ],
+    "evidence_refs": [
+      {
+        "chunk_id": "derived-1",
+        "support_tier": "high"
+      }
     ]
   }
 ]
@@ -452,14 +550,16 @@ Submit quiz answers and get results.
   "score": 85.0,
   "total_questions": 10,
   "correct_answers": 8,
-  "incorrect_answers": 2,
-  "results": [
+  "question_results": [
     {
       "question_id": "q1",
-      "user_answer": 0,
-      "correct_answer": 0,
+      "user_answer": "labeled",
+      "correct_answer": "labeled",
       "is_correct": true,
-      "explanation": "Correct! Machine learning is a subset of AI."
+      "review_note": "Accepted equivalent intermediate reasoning.",
+      "review_details": [
+        "Equivalent reasoning is accepted when it preserves the document's causal link."
+      ]
     }
   ]
 }

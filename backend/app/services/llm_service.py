@@ -28,9 +28,11 @@ class LLMService:
                             system_prompt: Optional[str] = None) -> str:
         """Generate an answer using the LLM with RAG context"""
         try:
-            # Default system prompt for QA
+            # Default template uses only {context} and {question}. Callers may pass a fully-built
+            # prompt (e.g. QA with RAG) — never run .format() on those: document text often contains
+            # literal braces like {x1} or JSON, which raises KeyError ('x1', etc.).
             if not system_prompt:
-                system_prompt = """You are a helpful AI assistant that answers questions based on the provided document context. 
+                template = """You are a helpful AI assistant that answers questions based on the provided document context. 
                 
 Guidelines:
 1. Answer the question using ONLY the information provided in the context
@@ -44,12 +46,9 @@ Context: {context}
 Question: {question}
 
 Answer:"""
-
-            # Format the prompt
-            prompt = system_prompt.format(
-                context=context,
-                question=question
-            )
+                prompt = template.format(context=context, question=question)
+            else:
+                prompt = system_prompt
             
             # Generate response
             response = await self._generate_response(prompt)
@@ -59,7 +58,36 @@ Answer:"""
         except Exception as e:
             logger.error(f"Error generating LLM answer: {str(e)}")
             return f"I apologize, but I encountered an error while generating an answer: {str(e)}"
-    
+
+    async def generate_reflection_cue(self, question: str, passage: str) -> str:
+        """Produce a short verbatim-style excerpt for the reflective gate without answering the question."""
+        passage = (passage or "").strip()
+        if not passage:
+            return ""
+        prompt = f"""You prepare text for a "reflection gate" in a study app. The learner will answer a question after seeing ONLY your output.
+
+PASSAGE (from the learner's uploaded document):
+<<<
+{passage[:10000]}
+>>>
+
+LEARNER'S QUESTION:
+{question.strip()}
+
+RULES:
+- Extract the relevant passage: quote at most 2 contiguous sentences from the PASSAGE only (verbatim). You may insert … where you deliberately omit a short span.
+- Do NOT summarize the passage into an answer for the user.
+- Do NOT restate the direct answer to the question (if the question asks for a fact, name, date, number, or definition that appears in the passage, omit that resolving fact—truncate or use … before it).
+- Do NOT invent text that is not in the passage.
+- Output only the excerpt. No labels, quotes, or commentary."""
+        try:
+            out = (await self._generate_response(prompt)).strip()
+            out = out.strip('"').strip("'")
+            return out[:450]
+        except Exception as e:
+            logger.warning("Reflection cue generation failed: %s", e)
+            raise
+
     async def generate_summary(self, content: str, max_length: int = 500) -> str:
         """Generate a summary of the provided content"""
         try:
@@ -783,6 +811,194 @@ Flashcards:"""
                 "model_name": self.model_name,
                 "error": str(e)
             }
+
+    async def audit_sentence_support_levels(
+        self,
+        sentences: List[str],
+        evidence_context: str,
+        recent_history_summary: Optional[str] = None,
+    ) -> Optional[List[str]]:
+        """Second-pass critic: label each answer sentence vs document evidence.
+
+        Returns parallel list of values: grounded | inferred | weak_support.
+        None on parse failure or empty input.
+        """
+        if not sentences or not evidence_context.strip():
+            return None
+
+        numbered = "\n".join(f"{i}: {s}" for i, s in enumerate(sentences))
+        prompt = f"""You are a ruthless fact-checker for a study assistant. Assume the tutor may be wrong or may "shortcut" using general knowledge.
+
+Labels must reflect ONLY the EVIDENCE block below—not training data, not common sense unless the evidence states it.
+
+For each numbered sentence from the ASSISTANT ANSWER, choose exactly one label:
+- grounded: directly supported or clearly paraphrased by the evidence (you can point to overlapping meaning)
+- inferred: one reasonable step beyond the evidence, still clearly tied to it
+- weak_support: vague tie to evidence, hedging, or filler
+- statistical_shortcut: you cannot find a direct semantic match in the evidence; the sentence likely relies on outside knowledge or guesses
+
+Treat statistical_shortcut as the label when the tutor is effectively answering from general training data rather than the document.
+
+Return ONLY valid JSON with this shape (no markdown):
+{{"labels": ["grounded", "inferred", ...]}}
+
+Each value must be one of: grounded, inferred, weak_support, statistical_shortcut
+
+The "labels" array MUST have exactly {len(sentences)} strings in the same order as the numbered sentences (indices 0..{len(sentences) - 1}).
+
+CONVERSATION SUMMARY (may be empty):
+{recent_history_summary or "None"}
+
+EVIDENCE:
+{evidence_context[:14000]}
+
+ASSISTANT ANSWER SENTENCES:
+{numbered}
+"""
+        try:
+            response = await self._generate_response(prompt)
+            start = response.find("{")
+            end = response.rfind("}") + 1
+            if start == -1 or end <= start:
+                return None
+            data = json.loads(response[start:end])
+            labels = data.get("labels")
+            if not isinstance(labels, list) or len(labels) != len(sentences):
+                return None
+            normalized: List[str] = []
+            allowed = {"grounded", "inferred", "weak_support"}
+            for raw in labels:
+                s = str(raw).lower().strip().replace(" ", "_").replace("-", "_")
+                if s in (
+                    "statistical_shortcut",
+                    "training_shortcut",
+                    "outside_knowledge",
+                    "hallucination",
+                    "ungrounded",
+                    "weak",
+                    "filler",
+                    "shortcut",
+                    "weak_filler",
+                ):
+                    s = "weak_support"
+                if s not in allowed:
+                    return None
+                normalized.append(s)
+            return normalized
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.warning("Critic audit JSON parse failed: %s", exc)
+            return None
+        except Exception as exc:
+            logger.warning("Critic audit failed: %s", exc)
+            return None
+
+    async def grade_reasoning_gap_submission(
+        self,
+        gap_prompt: str,
+        expected_concepts: List[str],
+        rubric: List[str],
+        user_answer: str,
+        source_excerpt: str,
+    ) -> Optional[Dict[str, Any]]:
+        """LLM-as-judge for reasoning-gap equivalence. Returns dict with accept (bool), note (str)."""
+        if not user_answer.strip():
+            return None
+
+        concepts = ", ".join(expected_concepts[:12]) if expected_concepts else "(none)"
+        rubric_text = "\n".join(f"- {r}" for r in rubric[:8]) if rubric else "- (no rubric)"
+        prompt = f"""You grade a learner's short answer for a "reasoning gap" exercise.
+
+SOURCE EXCERPT (authoritative):
+{source_excerpt[:6000]}
+
+GAP PROMPT (with blank):
+{gap_prompt[:2000]}
+
+EXPECTED ANCHOR CONCEPTS (synonyms / paraphrases OK): {concepts}
+
+RUBRIC:
+{rubric_text}
+
+LEARNER ANSWER:
+{user_answer[:2000]}
+
+Return ONLY valid JSON (no markdown):
+{{"accept": true or false, "note": "one short sentence for the learner"}}
+
+accept true if the learner supplies an equivalent conceptual bridge supported by the excerpt (not necessarily exact wording).
+"""
+        try:
+            response = await self._generate_response(prompt)
+            start = response.find("{")
+            end = response.rfind("}") + 1
+            if start == -1 or end <= start:
+                return None
+            data = json.loads(response[start:end])
+            if "accept" not in data:
+                return None
+            return {
+                "accept": bool(data.get("accept")),
+                "note": str(data.get("note", "")).strip() or "Graded by model.",
+            }
+        except Exception as exc:
+            logger.warning("Reasoning-gap LLM grade failed: %s", exc)
+            return None
+
+    async def grade_oversight_critique(
+        self,
+        prior_ai_answer: str,
+        evidence_excerpt: str,
+        user_critique: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Judge whether the learner identified a valid flaw vs the evidence. points: 0, 1, or 2."""
+        if not user_critique.strip():
+            return None
+
+        prompt = f"""You evaluate a learner critiquing a flawed AI summary against document evidence.
+
+EVIDENCE EXCERPT:
+{evidence_excerpt[:6000]}
+
+PRIOR AI ANSWER (may overclaim or contradict evidence):
+{prior_ai_answer[:2000]}
+
+LEARNER CRITIQUE:
+{user_critique[:2000]}
+
+Return ONLY valid JSON (no markdown):
+{{
+  "valid_critique": true or false,
+  "evidence_anchored": true or false,
+  "note": "short feedback"
+}}
+
+valid_critique: the critique identifies a real omission, contradiction, overgeneralization, or unsupported claim relative to the evidence.
+evidence_anchored: the critique quotes, paraphrases closely, or explicitly points to the excerpt (e.g. page/chunk/excerpt language counts).
+
+Scoring for the app (do not output points, only booleans):
+- Full credit when both true.
+- Partial when valid_critique true but evidence_anchored false.
+"""
+        try:
+            response = await self._generate_response(prompt)
+            start = response.find("{")
+            end = response.rfind("}") + 1
+            if start == -1 or end <= start:
+                return None
+            data = json.loads(response[start:end])
+            valid = bool(data.get("valid_critique"))
+            anchored = bool(data.get("evidence_anchored"))
+            note = str(data.get("note", "")).strip() or "Graded by model."
+            if valid and anchored:
+                points = 2
+            elif valid:
+                points = 1
+            else:
+                points = 0
+            return {"points": points, "note": note, "valid_critique": valid, "evidence_anchored": anchored}
+        except Exception as exc:
+            logger.warning("Oversight LLM grade failed: %s", exc)
+            return None
 
 # Initialize global LLM service
 llm_service = LLMService()

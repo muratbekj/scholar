@@ -5,11 +5,11 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 
 from app.models.quiz import (
-    QuizRequest, QuizQuestion, QuestionType, DifficultyLevel,
+    QuizMode, QuizRequest, QuizQuestion, QuestionType, DifficultyLevel,
     QuizSessionCreate, QuizSubmission
 )
+from app.models.study import EvidenceRef
 from app.services.quiz_service import QuizService
-from app.services.llm_service import LLMService
 
 @pytest.fixture
 def mock_document_service():
@@ -30,7 +30,7 @@ def sample_quiz_request():
         filename="test_document.pdf",
         num_questions=5,
         difficulty=DifficultyLevel.MEDIUM,
-        question_types=[QuestionType.MULTIPLE_CHOICE, QuestionType.TRUE_FALSE]
+        question_types=[QuestionType.MULTIPLE_CHOICE, QuestionType.TRUE_FALSE],
     )
 
 @pytest.fixture
@@ -123,7 +123,87 @@ class TestQuizService:
         assert result.correct_answers == 1
         assert result.total_questions == 2
         assert len(result.question_results) == 2
-    
+
+    @pytest.mark.asyncio
+    async def test_generate_reasoning_gap_quiz(self, quiz_service, mock_document_service):
+        """Test reasoning-gap quiz generation"""
+        mock_document_service.get_extracted_text.return_value = (
+            "Machine learning models improve as they process more labeled training examples."
+        )
+
+        request = QuizRequest(
+            file_id="test-file-123",
+            filename="test_document.pdf",
+            num_questions=2,
+            difficulty=DifficultyLevel.MEDIUM,
+            mode=QuizMode.REASONING_GAP,
+        )
+
+        response = await quiz_service.generate_quiz(request)
+        quiz = quiz_service.active_quizzes[response.quiz_id]
+
+        assert response.mode == QuizMode.REASONING_GAP
+        assert quiz.questions[0].mode == QuizMode.REASONING_GAP
+        assert quiz.questions[0].gap_prompt is not None
+        assert quiz.questions[0].accepted_reasoning
+        assert quiz.questions[0].gap_steps
+        assert quiz.questions[0].grading_rubric
+
+    @pytest.mark.asyncio
+    async def test_ai_oversight_scoring_rewards_citations(self, quiz_service):
+        """Test AI oversight grading with and without concrete evidence citations"""
+        question = QuizQuestion(
+            id="oversight-1",
+            question="Critique the AI answer.",
+            question_type=QuestionType.SHORT_ANSWER,
+            correct_answer="Any evidence-backed critique identifying the flaw earns credit.",
+            difficulty=DifficultyLevel.MEDIUM,
+            points=2,
+            mode=QuizMode.AI_OVERSIGHT,
+            prior_ai_answer="The document says neural networks always outperform other methods.",
+            evidence_refs=[
+                EvidenceRef(
+                    excerpt="Neural networks can be effective for some tasks.",
+                    source_file="test-file-123",
+                )
+            ],
+            metadata={"expected_issues": ["overclaim", "unsupported"]},
+        )
+
+        partial = await quiz_service._grade_answer(
+            question,
+            "This is an overclaim because the source is narrower.",
+        )
+        full = await quiz_service._grade_answer(
+            question,
+            'This is an overclaim. The excerpt says "Neural networks can be effective for some tasks."',
+        )
+
+        assert partial["is_correct"] is True
+        assert partial["points_earned"] == 1
+        assert full["points_earned"] == 2
+        assert full["review_details"]
+
+    @pytest.mark.asyncio
+    async def test_reasoning_gap_scoring_returns_review_details(self, quiz_service):
+        question = QuizQuestion(
+            id="gap-1",
+            question="Complete the missing step.",
+            question_type=QuestionType.SHORT_ANSWER,
+            correct_answer="generalize",
+            difficulty=DifficultyLevel.MEDIUM,
+            points=1,
+            mode=QuizMode.REASONING_GAP,
+            accepted_reasoning=["generalization", "generalize"],
+        )
+
+        result = await quiz_service._grade_answer(
+            question, "The model can generalize to new examples."
+        )
+
+        assert result["is_correct"] is True
+        assert result["review_details"]
+
     def test_check_answer_multiple_choice(self, quiz_service, sample_questions):
         """Test multiple choice answer checking"""
         question = sample_questions[0]  # Multiple choice question
@@ -200,6 +280,7 @@ class TestQuizModels:
         )
         assert request.num_questions == 10  # Default value
         assert request.difficulty == DifficultyLevel.MEDIUM  # Default value
+        assert request.mode == QuizMode.STANDARD
     
     def test_question_types_enum(self):
         """Test question type enum values"""

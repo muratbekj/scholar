@@ -17,13 +17,71 @@ export interface FileUploadResponse {
   };
 }
 
+export type QAGenerationMode = 'standard' | 'reasoning_gap';
+export type QAResponseState = 'pending_reflection' | 'answered';
+
+export interface EvidenceRef {
+  chunk_id?: string | null;
+  excerpt?: string | null;
+  source_file?: string | null;
+  page_number?: number | null;
+  score?: number | null;
+  support_tier?: string | null;
+  score_band?: string | null;
+  label?: string | null;
+}
+
+export interface AnswerSegment {
+  text: string;
+  support_level: 'grounded' | 'inferred' | 'weak_support';
+  support_tier?: string | null;
+  support_label_ui?: string | null;
+  source_match_percent?: number | null;
+  evidence_refs: EvidenceRef[];
+}
+
+export interface SourceLink {
+  excerpt: string;
+  page_number?: number | null;
+  chunk_id?: string | null;
+  source_file?: string | null;
+  segment_index?: number | null;
+  support_level?: string;
+}
+
+export interface AuditSummary {
+  summary: string;
+  grounded_segments?: number;
+  inferred_segments?: number;
+  weak_support_segments?: number;
+  recent_history_summary?: string | null;
+  /** Grounded spans → evidence for verification (map to PDF page in a future viewer). */
+  source_links?: SourceLink[];
+}
+
+export interface GapStep {
+  order: number;
+  prompt: string;
+  placeholder: string;
+  expected_concept?: string | null;
+  rubric_hint?: string | null;
+  evidence_refs?: EvidenceRef[];
+}
+
 export interface QARequest {
   question: string;
   file_id?: string;
   session_id?: string;
-  filename?: string;  // Add filename field
+  filename?: string;
   use_rag?: boolean;
   search_k?: number;
+  generation_mode?: QAGenerationMode;
+}
+
+export interface QAReflectionSubmitRequest {
+  session_id: string;
+  reflection: string;
+  pending_question_id?: string | null;
 }
 
 export interface QAResponse {
@@ -31,9 +89,22 @@ export interface QAResponse {
   session_id: string;
   message_id: string;
   timestamp: string;
-  rag_context?: any;
+  rag_context?: unknown;
   processing_time: number;
-  confidence_score?: number;
+  confidence_score?: number | null;
+  response_state?: QAResponseState;
+  reflection_state?: string;
+  reflection_prompt?: string | null;
+  visible_cue?: string | null;
+  hidden_evidence_count?: number;
+  pending_question_id?: string | null;
+  answer_segments?: AnswerSegment[];
+  audit_summary?: AuditSummary | null;
+  visible_evidence_refs?: EvidenceRef[];
+  complexity_score?: number | null;
+  generation_mode?: QAGenerationMode;
+  gap_steps?: GapStep[];
+  intuition_text?: string | null;
 }
 
 export interface QASessionCreate {
@@ -47,6 +118,7 @@ export interface QASessionResponse {
   filename: string;
   created_at: string;
   message_count: number;
+  pending_questions?: number;
 }
 
 export interface QAMessage {
@@ -68,6 +140,8 @@ export interface QASession {
 }
 
 // Quiz Types
+export type QuizMode = 'standard' | 'reasoning_gap' | 'ai_oversight';
+
 export interface QuizRequest {
   file_id: string;
   filename: string;
@@ -76,6 +150,7 @@ export interface QuizRequest {
   question_types?: ('multiple_choice' | 'true_false' | 'short_answer')[];
   include_explanations?: boolean;
   estimated_time?: number;
+  mode?: QuizMode;
 }
 
 export interface QuizResponse {
@@ -87,6 +162,7 @@ export interface QuizResponse {
   total_questions: number;
   total_points: number;
   difficulty: 'easy' | 'medium' | 'hard';
+  mode?: QuizMode;
   estimated_time?: number;
   created_at: string;
   processing_time: number;
@@ -99,6 +175,13 @@ export interface QuizQuestionResponse {
   options?: string[];
   difficulty: 'easy' | 'medium' | 'hard';
   points: number;
+  mode?: QuizMode;
+  evidence_refs?: EvidenceRef[];
+  prior_ai_answer?: string | null;
+  review_guidance?: string | null;
+  gap_prompt?: string | null;
+  gap_steps?: GapStep[];
+  grading_rubric?: string[];
 }
 
 export interface QuizSessionCreate {
@@ -136,11 +219,18 @@ export interface QuizResult {
   question_results: Array<{
     question_id: string;
     question: string;
+    mode?: string;
     user_answer: string;
     correct_answer: string;
     is_correct: boolean;
     points_earned: number;
+    points_possible?: number;
     explanation?: string;
+    review_note?: string;
+    review_details?: string[];
+    prior_ai_answer?: string | null;
+    gap_steps?: GapStep[];
+    human_agency_bonus_applied?: boolean;
   }>;
   feedback?: string;
 }
@@ -239,6 +329,13 @@ class ApiService {
   // Ask question
   async askQuestion(request: QARequest): Promise<QAResponse> {
     return this.request<QAResponse>('/qa/ask', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  async submitReflection(request: QAReflectionSubmitRequest): Promise<QAResponse> {
+    return this.request<QAResponse>('/qa/reflect', {
       method: 'POST',
       body: JSON.stringify(request),
     });
