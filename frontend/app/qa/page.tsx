@@ -11,7 +11,10 @@ import { SessionHistory } from "@/components/chat/SessionHistory"
 import { useQASession } from "@/lib/hooks/useQASession"
 import { useSessionHistory } from "@/lib/hooks/useSessionHistory"
 import { useToast } from "@/components/ui/toast"
-import { QAMessage } from "@/lib/api"
+import { QAGenerationMode } from "@/lib/api"
+import { getPendingReflectionGate } from "@/lib/qa-gate"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { Textarea } from "@/components/ui/textarea"
 import Link from "next/link"
 
 export default function QAPage() {
@@ -19,11 +22,22 @@ export default function QAPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [fileName, setFileName] = useState<string>("")
   const [fileId, setFileId] = useState<string>("")
-  const [isInitializing, setIsInitializing] = useState(true)  // Add initial loading state
+  const [isInitializing, setIsInitializing] = useState(true)
+  const [generationMode, setGenerationMode] = useState<QAGenerationMode>("standard")
+  const [reflectionDraft, setReflectionDraft] = useState("")
   const scrollAreaRef = useRef<HTMLDivElement>(null)
   const sessionCreatedRef = useRef(false)
 
-  const { sessionState, createSession, loadSession, askQuestion, deleteSession, clearError, resetSession } = useQASession()
+  const {
+    sessionState,
+    createSession,
+    loadSession,
+    askQuestion,
+    submitReflection,
+    deleteSession,
+    clearError,
+    resetSession,
+  } = useQASession()
   const { historyState, removeSessionFromList, addSessionToList } = useSessionHistory()
   const { addToast, clearToasts } = useToast()
 
@@ -81,35 +95,72 @@ export default function QAPage() {
         }
       })
     }
-  }, [sessionState.session?.messages?.length]) // Use length instead of the array reference
+  }, [sessionState.session?.messages?.length])
+
+  const pendingGate = getPendingReflectionGate(sessionState.session?.messages)
 
   const handleSendMessage = async (message: string) => {
     try {
       addToast({
         type: 'loading',
-        title: 'Generating answer...',
-        message: 'This may take 3-8 seconds depending on question complexity'
-      });
-      
-      await askQuestion(message)
-      
-      // Clear all toasts (including loading) and show success
-      clearToasts();
-      addToast({
-        type: 'success',
-        title: 'Answer generated',
-        message: 'AI has provided a response to your question'
-      });
+        title: 'Working on your question...',
+        message: 'This may take a few seconds depending on complexity and local model load',
+      })
+
+      const response = await askQuestion(message, { generationMode })
+
+      clearToasts()
+      if (response?.response_state === 'pending_reflection') {
+        setReflectionDraft("")
+        addToast({
+          type: 'success',
+          title: 'Reflective gate',
+          message:
+            'Write a short intuition below to unlock the full answer. Hover answer segments later for source match hints.',
+        })
+      } else {
+        addToast({
+          type: 'success',
+          title: 'Answer ready',
+          message: 'Review highlighted segments — green is closest to the document, red may be weakly supported.',
+        })
+      }
     } catch (error) {
       console.error("Failed to send message:", error)
-      
-      // Clear all toasts (including loading) and show error
-      clearToasts();
+
+      clearToasts()
       addToast({
         type: 'error',
         title: 'Failed to get answer',
-        message: error instanceof Error ? error.message : 'Unknown error'
-      });
+        message: error instanceof Error ? error.message : 'Unknown error',
+      })
+    }
+  }
+
+  const handleSubmitReflection = async () => {
+    if (!pendingGate || !reflectionDraft.trim()) return
+    try {
+      addToast({
+        type: 'loading',
+        title: 'Unlocking answer...',
+        message: 'Applying your reflection and running the audit pass',
+      })
+      await submitReflection(reflectionDraft.trim(), pendingGate.pendingQuestionId)
+      setReflectionDraft("")
+      clearToasts()
+      addToast({
+        type: 'success',
+        title: 'Answer unlocked',
+        message: 'Hover segments to see how well each part tracks the sources.',
+      })
+    } catch (error) {
+      console.error("Reflection failed:", error)
+      clearToasts()
+      addToast({
+        type: 'error',
+        title: 'Could not submit reflection',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      })
     }
   }
 
@@ -212,6 +263,7 @@ export default function QAPage() {
   }
 
   return (
+    <TooltipProvider delayDuration={280}>
     <div className="min-h-screen bg-background flex flex-col">
       {/* Sticky Header */}
       <header className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 flex items-center justify-between p-4 border-b border-border">
@@ -232,6 +284,18 @@ export default function QAPage() {
                 <span>{fileName}</span>
               </div>
             )}
+            <label className="hidden sm:flex items-center gap-2 text-xs text-muted-foreground ml-2">
+              <span className="whitespace-nowrap">Answer style</span>
+              <select
+                value={generationMode}
+                onChange={(e) => setGenerationMode(e.target.value as QAGenerationMode)}
+                className="rounded-md border border-border bg-background px-2 py-1 text-foreground text-xs max-w-[10rem]"
+                disabled={!!pendingGate || sessionState.isAsking}
+              >
+                <option value="standard">Standard</option>
+                <option value="reasoning_gap">Reasoning gaps</option>
+              </select>
+            </label>
           </div>
         </div>
       </header>
@@ -302,14 +366,62 @@ export default function QAPage() {
         </ScrollArea>
       </main>
 
-      {/* Sticky Chat Input */}
+      {/* Sticky reflection + chat */}
       <div className="sticky bottom-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t border-border">
-        <div className="p-4">
+        {pendingGate ? (
+          <div className="p-4 max-w-4xl mx-auto space-y-2 border-b border-border/60 bg-muted/20">
+            <p className="text-sm font-medium text-foreground">Your intuition (required)</p>
+            <p className="text-xs text-muted-foreground">
+              In one or two sentences, what do you think the document supports? This step resists passive
+              shortcuts before the model answer appears.
+            </p>
+            <Textarea
+              value={reflectionDraft}
+              onChange={(e) => setReflectionDraft(e.target.value)}
+              placeholder="e.g. I think the text ties labeled data to better generalization because…"
+              disabled={sessionState.isAsking}
+              className="min-h-[96px]"
+              aria-label="Reflection before unlocked answer"
+            />
+            <div className="flex justify-end gap-2">
+              <Button
+                size="sm"
+                onClick={handleSubmitReflection}
+                disabled={sessionState.isAsking || !reflectionDraft.trim()}
+                className="bg-accent hover:bg-accent/90"
+              >
+                Unlock answer
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        <div className="px-4 pt-2 pb-1 max-w-4xl mx-auto">
+          <p className="text-[10px] sm:text-xs text-muted-foreground flex flex-wrap gap-x-3 gap-y-1">
+            <span>
+              <span className="inline-block w-2 h-2 rounded-sm bg-emerald-500/80 mr-1 align-middle" />
+              Direct citation
+            </span>
+            <span>
+              <span className="inline-block w-2 h-2 rounded-sm bg-amber-500/80 mr-1 align-middle" />
+              Inference
+            </span>
+            <span>
+              <span className="inline-block w-2 h-2 rounded-sm bg-red-500/70 mr-1 align-middle" />
+              Weak / filler
+            </span>
+            <span className="text-muted-foreground/80">Hover segments for match % (heuristic).</span>
+          </p>
+        </div>
+        <div className="p-4 pt-2">
           <ChatInput
             onSendMessage={handleSendMessage}
             isLoading={sessionState.isAsking}
-            disabled={!sessionState.session}
-            placeholder="Ask a question about your document..."
+            disabled={!sessionState.session || !!pendingGate}
+            placeholder={
+              pendingGate
+                ? "Submit your reflection above first…"
+                : "Ask a question about your document..."
+            }
           />
         </div>
       </div>
@@ -325,5 +437,6 @@ export default function QAPage() {
         />
       )}
     </div>
+    </TooltipProvider>
   )
 }
