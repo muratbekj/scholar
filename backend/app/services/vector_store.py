@@ -3,6 +3,7 @@ from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
 from typing import List, Dict, Any, Optional, Tuple
 import logging
+import math
 import os
 from pathlib import Path
 from datetime import datetime
@@ -11,6 +12,39 @@ from ..core.config import get_settings
 from ..core.providers import get_embeddings
 
 logger = logging.getLogger(__name__)
+
+def _unit(vector: List[float]) -> List[float]:
+    norm = math.sqrt(sum(x * x for x in vector))
+    return [x / norm for x in vector] if norm else list(vector)
+
+
+class UnitNormalizedEmbeddings(Embeddings):
+    """Scales every vector to unit length, so a squared-L2 distance d equals 2 - 2*cosine.
+
+    Ollama's /api/embed and full-size Vertex embeddings are already unit length; this
+    guarantees it for reduced output dimensions and other models.
+    """
+
+    def __init__(self, base: Embeddings):
+        self.base = base
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        return [_unit(v) for v in self.base.embed_documents(texts)]
+
+    def embed_query(self, text: str) -> List[float]:
+        return _unit(self.base.embed_query(text))
+
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        return [_unit(v) for v in await self.base.aembed_documents(texts)]
+
+    async def aembed_query(self, text: str) -> List[float]:
+        return _unit(await self.base.aembed_query(text))
+
+
+def chroma_distance_to_relevance(distance: float) -> float:
+    """Chroma's default squared-L2 distance on unit vectors -> cosine similarity clamped to [0, 1]."""
+    return max(0.0, min(1.0, 1.0 - distance / 2.0))
+
 
 class VectorStoreService:
     """Service for managing vector storage using ChromaDB"""
@@ -27,7 +61,7 @@ class VectorStoreService:
         self.collection_name = collection_name
         # One collection must only ever hold vectors from one embedding model: Vertex and
         # nomic-embed-text vectors differ in dimension. Use a separate CHROMA_DIR per provider.
-        self.embeddings = embeddings or get_embeddings(model=self.embedding_model)
+        self.embeddings = UnitNormalizedEmbeddings(embeddings or get_embeddings(model=self.embedding_model))
         self.vector_store = None
         self._initialize_vector_store()
         logger.info(f"Initialized vector store service with directory: {self.persist_directory}")
@@ -134,7 +168,7 @@ class VectorStoreService:
                 formatted_results.append({
                     'content': doc.page_content,
                     'metadata': doc.metadata,
-                    'similarity_score': float(score),
+                    'similarity_score': chroma_distance_to_relevance(float(score)),
                     'id': doc.metadata.get('chunk_id', 'unknown')
                 })
             
