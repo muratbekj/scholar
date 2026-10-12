@@ -23,7 +23,7 @@ class DocumentService:
                  chunk_size: int = 1000,
                  chunk_overlap: int = 200):
         self.upload_dir = Path(upload_dir or get_settings().upload_dir)
-        self.upload_dir.mkdir(exist_ok=True)
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.large_document_threshold = large_document_threshold
         self.chunking_service = TextChunkingService(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     

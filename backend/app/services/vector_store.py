@@ -56,7 +56,7 @@ class VectorStoreService:
                  embeddings: Optional[Embeddings] = None):
         settings = get_settings()
         self.persist_directory = Path(persist_directory or settings.chroma_dir)
-        self.persist_directory.mkdir(exist_ok=True)
+        self.persist_directory.mkdir(parents=True, exist_ok=True)
         self.embedding_model = embedding_model or settings.embed_model
         self.collection_name = collection_name
         # One collection must only ever hold vectors from one embedding model: Vertex and
