@@ -76,7 +76,7 @@ A frozen `Settings` dataclass built from `os.environ` by a cached `get_settings(
 - Record the resulting pass/deselect counts as the baseline. Today, before the fix, the result is 37 passed and 4 failed (async tests never set up).
 
 **Commit 2, upgrade:**
-- Bump `langchain`, `langchain-chroma`, `langchain-ollama` and `langchain-community` to their 1.x-compatible lines (resolved on 2026-10-12: langchain 1.4.5, langchain-chroma 1.1.0, langchain-ollama 1.1.0, langchain-community 0.4.2, langchain-core 1.6.10). Regenerate `uv.lock`.
+- Bump `langchain`, `langchain-chroma`, `langchain-ollama` and `langchain-community` to their 1.x-compatible lines (resolved on 2026-10-12: langchain 1.4.5, langchain-ollama 1.1.0, langchain-community 0.4.2, langchain-core 1.6.10; langchain-chroma pinned `>=1.0.0,<1.1` because 1.1.0 requires chromadb ≥1.3.5). Regenerate `uv.lock`.
 - Keep `chromadb` at the lowest version `langchain-chroma` 1.1 accepts, to limit changes to the on-disk format of existing `chroma_db/` data.
 - Code edits are limited to import paths, if any are needed. The app imports only `langchain_ollama` and `langchain_chroma`, which keep their paths.
 
