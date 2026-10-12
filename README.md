@@ -124,14 +124,34 @@ cd frontend && bun run electron:dev
 ## 🔧 Configuration
 
 ### Environment Variables
+All settings are optional. With none set, Scholar runs fully locally on Ollama + ChromaDB.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LLM_PROVIDER` | `ollama` | `ollama` or `vertex` |
+| `OLLAMA_LLM_MODEL` | `gpt-oss:20b` | Ollama chat model |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model |
+| `VERTEX_LLM_MODEL` | none | required for `vertex`, e.g. a current Gemini Flash model from the [Vertex model list](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions) |
+| `VERTEX_EMBED_MODEL` | none | required for `vertex`, e.g. `gemini-embedding-001` |
+| `VERTEX_THINKING_BUDGET` | model default | optional thinking-token budget for Gemini |
+| `GOOGLE_CLOUD_PROJECT` | none | required for `vertex` |
+| `GOOGLE_CLOUD_LOCATION` | `us-central1` | Vertex region |
+| `CHROMA_DIR` | `./chroma_db` | Chroma storage directory |
+| `UPLOAD_DIR` | `uploads` | uploaded files and extracted text |
+| `CORS_ORIGINS` | localhost:3000/3001, 127.0.0.1:3000/3001, `null` | comma separated; `*` is not allowed |
+
+### Running with Vertex AI (Gemini) locally
+
 ```bash
-# Backend configuration
-EMBEDDING_MODEL=nomic-embed-text
-CHROMA_PERSIST_DIR=./chroma_db
-LARGE_DOCUMENT_THRESHOLD=5000
-CHUNK_SIZE=1000
-CHUNK_OVERLAP=200
+gcloud auth application-default login          # Vertex uses ADC; never set GOOGLE_API_KEY / GEMINI_API_KEY
+cd backend && uv sync --extra cloud
+LLM_PROVIDER=vertex GOOGLE_CLOUD_PROJECT=your-project \
+VERTEX_LLM_MODEL=<gemini model> VERTEX_EMBED_MODEL=gemini-embedding-001 \
+CHROMA_DIR=./chroma_db_vertex uv run uvicorn app.main:app --reload
 ```
+
+Use a separate `CHROMA_DIR` per provider: Vertex and Ollama embeddings have different
+dimensions and must never share a collection.
 
 ### Ollama Configuration
 ```bash

@@ -230,10 +230,11 @@ The pipeline includes comprehensive error handling:
 ## Dependencies
 
 ### Required Packages
-- `langchain>=0.3.27`
-- `langchain-ollama>=0.3.7`
-- `langchain-community` (for ChromaDB integration)
-- `chromadb>=1.0.20`
+- `langchain>=1.4.5`
+- `langchain-ollama>=1.1.0`
+- `langchain-chroma>=1.0.0,<1.1` (ChromaDB integration)
+- `chromadb==1.0.20` (pinned so existing local stores keep their on-disk format)
+- `langchain-google-genai>=4.4.1` (optional `cloud` extra, for Vertex AI)
 
 ### External Services
 - Ollama server running with `nomic-embed-text` model
