@@ -39,6 +39,9 @@ jobs:
       - name: Build image
         run: docker build -t scholar-api backend
 
+      - name: Image size
+        run: docker image ls scholar-api --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+
       - name: Image serves /health on $PORT with no other configuration
         run: |
           docker run -d --name api -e PORT=9090 -p 9090:9090 scholar-api
