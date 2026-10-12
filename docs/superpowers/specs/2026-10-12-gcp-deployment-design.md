@@ -32,6 +32,9 @@ Scope: `backend/`, plus one change in `frontend/lib/api.ts` (the client id heade
 | D9 | Shared wiring: keep the existing one-singleton-per-module pattern, and make constructors default to that singleton instead of building new instances. No `container.py`. | Existing tests patch `app.services.<x>.llm_service` and construct services directly. This keeps them working unchanged. |
 | D10 | The default `CORS_ORIGINS` adds `http://127.0.0.1:3000` and `http://127.0.0.1:3001`. A `*` entry is rejected at startup. | The packaged Electron app loads `http://127.0.0.1:3001` (`electron/main.js:177`), which today only gets through via the wildcard. |
 | D11 | Leave `max_tokens` unset for Vertex (parity). Add an optional `VERTEX_THINKING_BUDGET` (unset = model default). | MJ wants to tune thinking per use case later. A 2048 cap would count thinking tokens and truncate answers. |
+| D12 | `VectorStoreService` always returns `similarity_score` as a 0–1 relevance score where higher is better, on both backends. Done in M2a as its own commit, labeled as a bug fix that **changes local output**. | Existing bug: Chroma returns a distance (lower = better), but `qa_service` treats the value as relevance in `_source_match_percent`, the heuristic grounding check (`similarity * 0.5`), `_score_band`, evidence-ref scores and `_calculate_confidence_score`. |
+| D13 | Cloud-mode cost guardrails: maximum upload size, maximum chunks per document, and a per-`client_id` rate limit on LLM-calling routes. They return 413, 413 and 429. Enforced only in cloud mode, so local behavior stays unchanged. | Bounds Vertex spend from a single client or file on a public URL. |
+| D14 | In M4, groundedness is scored by the separate judge model, not the app's critic. Critic-vs-judge agreement on per-sentence support labels is reported as its own metric. | The critic shouldn't grade itself. The agreement number measures how much the in-app critic can be trusted. |
 
 ## Configuration (`app/core/config.py`)
 
@@ -55,6 +58,9 @@ A frozen `Settings` dataclass built from `os.environ` by a cached `get_settings(
 | `STORAGE_BACKEND` | `local` | M2b | `local` or `gcs` |
 | `GCS_BUCKET` | none | M2b | required when gcs |
 | `SESSION_BACKEND` | `memory` | M2b | `memory` or `postgres` |
+| `MAX_UPLOAD_MB` | `20` | M2b | cloud mode; checked before extraction, returns 413 (D13) |
+| `MAX_CHUNKS_PER_DOC` | `500` | M2b | cloud mode; checked after chunking, before embedding, returns 413 (D13). Default to be confirmed in the M2b design pass |
+| `RATE_LIMIT_PER_MIN` | `20` | M2b | cloud mode; LLM calls per `client_id` per minute per instance, returns 429 (D13). Default to be confirmed in the M2b design pass |
 | `ENABLE_TRACING` | `false` | M3 | |
 | `PRICE_INPUT_PER_1M`, `PRICE_OUTPUT_PER_1M` | `0` | M3 | MJ fills these from the Vertex pricing page |
 
@@ -109,6 +115,14 @@ A frozen `Settings` dataclass built from `os.environ` by a cached `get_settings(
 - `RAGPipelineService.process_document_upload` no longer calls `EmbeddingService.embed_batch`. The vector-store write embeds the chunks once.
 - The response's `embedding` block keeps its keys. `total_embeddings` is the chunk count, and `successful_embeddings`/`failed_embeddings` come from the store write result (all on success, none on failure). `success` reflects whether embedding ran.
 
+**Score normalization (D12), separate commit:**
+- `VectorStoreService.search_similar` converts each backend's raw score to relevance = cosine similarity clamped to [0, 1]:
+  - Chroma, the existing collection's default squared L2 on unit vectors: `clamp(1 - d/2)`.
+  - PGVector, cosine distance: `clamp(1 - d)`.
+- Callers and response shapes stay the same. Only the values change, so the commit message calls it a bug fix that changes local output (heatmap percentages, score bands, confidence).
+- The plan verifies that Ollama `nomic-embed-text` and the Vertex embeddings return unit-length vectors. If either does not, Chroma relevance is computed from the cosine of the query and returned vectors instead of the L2 formula.
+- Test: with a fake embedding store, a chunk closer to the query gets a strictly higher `similarity_score`, and every score is in [0, 1].
+
 **CORS (D10):** `allow_origins` comes from `CORS_ORIGINS`. `allow_credentials=True` stays.
 
 **Packaging:**
@@ -144,7 +158,7 @@ Requirements from the brief, plus the decisions above:
   - Get-by-file and stats use SQLAlchemy over `langchain_pg_embedding` filtered on `cmetadata`. Delete uses `PGVector.delete(ids=…)`.
   - `VectorStoreService` public methods keep their signatures. Chroma is unchanged.
   - Add a comment that one collection must never mix embedding models.
-  - Note: `similarity_score` is L2 distance on Chroma and cosine distance on PGVector. The shape is unchanged, but the values differ.
+  - Scores are normalized per D12, using the cosine-distance formula.
 - **Sessions:**
   - A `SessionStore` interface, with an in-memory implementation (default) and a Postgres implementation: a `sessions` table with `id`, `client_id`, `kind` (qa/quiz/quiz_def), `data` JSONB, `created_at`, `updated_at`. Selected by `SESSION_BACKEND`.
   - All session CRUD in `qa_service` and `quiz_service` goes through it, scoped by `client_id`. That includes `active_quizzes`, so a quiz generated on one instance can be submitted on another.
@@ -153,6 +167,11 @@ Requirements from the brief, plus the decisions above:
   - The `X-Client-Id` dependency is applied to all routers and validates a UUID. Cloud mode returns 400 when the header is missing. Local mode defaults to `"local"`.
   - `client_id` goes into chunk metadata at ingest. Every search, get and delete filters on `client_id` (plus `file_id` where applicable).
   - Add a TODO noting Firebase Auth or IAP as the next step.
+- **Cost guardrails (D13, cloud mode only):**
+  - Upload size is checked before extraction, and over `MAX_UPLOAD_MB` returns 413.
+  - Chunk count is checked after chunking and before any embedding call, and over `MAX_CHUNKS_PER_DOC` returns 413. Nothing is stored for a rejected file.
+  - Rate limit: an in-memory sliding window per `client_id` per instance on LLM-calling routes (QA ask/reflect, quiz generate/submit, flashcards generate, and upload with embedding). Over the limit returns 429 with `Retry-After`.
+  - Tests cover each limit, and confirm local mode is unaffected.
 - **Frontend:** `frontend/lib/api.ts` generates a UUID once, keeps it in `localStorage`, and sends `X-Client-Id` on every request, including `uploadFile`.
 - **Tests:**
   - Storage interface (local implementation, GCS mocked).
@@ -176,8 +195,9 @@ Requirements from the brief, plus the decisions above:
 - `backend/evals/`: 3–5 public documents committed to the repo, about 30 questions in versioned JSONL, each with an expected source location and a reference answer. The set is frozen and carries a version string.
 - `uv run python -m evals.run --provider ollama|vertex` reports:
   - retrieval hit rate @k
-  - groundedness, via the existing `audit_sentence_support_levels`
-  - LLM-as-judge correctness, using a separate fixed judge prompt and model
+  - groundedness, scored by the separate judge model, which labels each answer sentence's support (D14)
+  - critic-vs-judge agreement: per-sentence agreement between the app's `audit_sentence_support_levels` labels and the judge's labels, reported as its own metric
+  - LLM-as-judge correctness against the reference answer, using a separate fixed judge prompt and model
   - latency p50/p95, tokens/sec, and average cost per request (reusing M3)
 - Results go to `evals/results/<timestamp>-<provider>.json` with the eval-set version and model names, and a summary table is printed. The runner is manual. Unit tests never call real cloud APIs.
 - Expected sources are matched by page/text span, not chunk id, so the match does not depend on chunk-id formats.
