@@ -1,3 +1,11 @@
+from .core.config import ConfigError, get_settings
+
+try:
+    # Validate configuration before any service is constructed (services build clients at import).
+    settings = get_settings()
+except ConfigError as exc:
+    raise SystemExit(str(exc)) from None
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .api.routes import files, qa, quiz, flashcards

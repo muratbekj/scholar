@@ -11,17 +11,18 @@ from datetime import datetime
 from .extractor import DocumentExtractor
 from .chunking import TextChunkingService
 from ..models.file import FileInfo, FileUploadResponse, UploadError
+from ..core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 class DocumentService:
     """Service for handling document uploads and processing"""
     
-    def __init__(self, upload_dir: str = "uploads", 
+    def __init__(self, upload_dir: Optional[str] = None,
                  large_document_threshold: int = 5000,  # characters
                  chunk_size: int = 1000,
                  chunk_overlap: int = 200):
-        self.upload_dir = Path(upload_dir)
+        self.upload_dir = Path(upload_dir or get_settings().upload_dir)
         self.upload_dir.mkdir(exist_ok=True)
         self.large_document_threshold = large_document_threshold
         self.chunking_service = TextChunkingService(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
