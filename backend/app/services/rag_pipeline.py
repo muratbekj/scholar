@@ -4,9 +4,9 @@ import logging
 from datetime import datetime
 import asyncio
 
-from .document import DocumentService
-from .embedding import EmbeddingService, EmbeddingResult
-from .vector_store import VectorStoreService
+from .document import DocumentService, document_service as shared_document_service
+from .embedding import EmbeddingService, EmbeddingResult, embedding_service as shared_embedding_service
+from .vector_store import VectorStoreService, vector_store_service as shared_vector_store_service
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +17,9 @@ class RAGPipelineService:
                  document_service: DocumentService = None,
                  embedding_service: EmbeddingService = None,
                  vector_store_service: VectorStoreService = None):
-        self.document_service = document_service or DocumentService()
-        self.embedding_service = embedding_service or EmbeddingService()
-        self.vector_store_service = vector_store_service or VectorStoreService()
+        self.document_service = document_service or shared_document_service
+        self.embedding_service = embedding_service or shared_embedding_service
+        self.vector_store_service = vector_store_service or shared_vector_store_service
         
         logger.info("Initialized RAG Pipeline Service")
     

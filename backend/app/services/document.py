@@ -242,3 +242,6 @@ class DocumentService:
     def get_supported_formats(self) -> List[str]:
         """Get list of supported file formats"""
         return list(DocumentExtractor.SUPPORTED_FORMATS.keys())
+
+# Shared instance: every service and route uses this one (spec D9)
+document_service = DocumentService()

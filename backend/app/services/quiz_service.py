@@ -23,7 +23,7 @@ from ..models.quiz import (
     QuizSubmission,
 )
 from ..models.study import EvidenceRef, GapStep, QuizMode
-from .document import DocumentService
+from .document import DocumentService, document_service as shared_document_service
 from .llm_service import llm_service
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class QuizService:
         return lines
 
     def __init__(self, document_service: DocumentService = None, use_llm: bool = True):
-        self.document_service = document_service or DocumentService()
+        self.document_service = document_service or shared_document_service
         self.active_quizzes: Dict[str, Quiz] = {}
         self.active_sessions: Dict[str, QuizSession] = {}
         self.use_llm = use_llm

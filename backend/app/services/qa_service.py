@@ -29,7 +29,7 @@ from ..models.study import (
     SourceLink,
     SupportLevel,
 )
-from .document import DocumentService
+from .document import DocumentService, document_service as shared_document_service
 from .llm_service import llm_service
 from .rag_pipeline import rag_pipeline_service
 
@@ -88,7 +88,7 @@ class QAService:
     """Service for handling QA sessions with reflection-gated RAG integration."""
 
     def __init__(self, document_service: DocumentService = None, use_llm: bool = True):
-        self.document_service = document_service or DocumentService()
+        self.document_service = document_service or shared_document_service
         self.active_sessions: Dict[str, QASession] = {}
         self.use_llm = use_llm
         self.reflection_min_words = REFLECTION_MIN_WORDS

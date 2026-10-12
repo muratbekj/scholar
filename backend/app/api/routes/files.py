@@ -5,15 +5,13 @@ from typing import List, Optional
 import logging
 
 from ...models.file import FileUploadResponse, FileInfo, UploadError
-from ...services.document import DocumentService
+from ...services.document import document_service
 from ...services.extractor import DocumentExtractor
 from ...services.rag_pipeline import rag_pipeline_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["files"])
 
-# Initialize document service
-document_service = DocumentService()
 
 @router.post("/upload", response_model=FileUploadResponse)
 async def upload_file(
