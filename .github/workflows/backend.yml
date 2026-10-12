@@ -1,0 +1,29 @@
+name: backend
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # No Ollama in CI. Point the client at a closed port so any stray call fails fast.
+      OLLAMA_HOST: http://127.0.0.1:9
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.8"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Unit tests
+        run: uv run pytest
