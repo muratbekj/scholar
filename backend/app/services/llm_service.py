@@ -1,26 +1,26 @@
-# LLM service for generating answers using Ollama models
-from langchain_ollama import OllamaLLM
+# LLM service for generating answers with the configured provider (Ollama or Vertex AI)
 from typing import Dict, Any, Optional, List
 import logging
-import asyncio
 import json
+
+from langchain_core.messages import BaseMessage
+
+from ..core.config import get_settings
+from ..core.providers import get_llm
 
 logger = logging.getLogger(__name__)
 
 class LLMService:
-    """Service for generating answers using Ollama LLM models"""
+    """Service for generating answers with the configured LLM provider"""
     
-    def __init__(self, model_name: str = "gpt-oss:20b", 
+    def __init__(self, model_name: Optional[str] = None,
                  temperature: float = 0.7,
                  max_tokens: int = 2048):
-        self.model_name = model_name
+        self.model_name = model_name or get_settings().llm_model
         self.temperature = temperature
-        self.max_tokens = max_tokens
-        self.llm = OllamaLLM(
-            model=model_name,
-            temperature=temperature
-        )
-        logger.info(f"Initialized LLM service with model: {model_name}")
+        self.max_tokens = max_tokens  # reported by validate_model; not sent to the model (spec D11)
+        self.llm = get_llm(temperature, model=self.model_name)
+        logger.info(f"Initialized LLM service with model: {self.model_name}")
     
     async def generate_answer(self, 
                             question: str, 
@@ -778,14 +778,10 @@ Flashcards:"""
     async def _generate_response(self, prompt: str) -> str:
         """Generate a response using the LLM"""
         try:
-            # Use asyncio to run the synchronous LLM call
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.llm.invoke(prompt)
-            )
-            
-            return response.strip()
+            response = await self.llm.ainvoke(prompt)
+            # OllamaLLM returns str; chat models return a message whose .text joins only text parts
+            text = response.text if isinstance(response, BaseMessage) else response
+            return text.strip()
             
         except Exception as e:
             logger.error(f"Error in LLM response generation: {str(e)}")

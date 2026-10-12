@@ -1,29 +1,36 @@
 # Vector store service for storing and retrieving embeddings
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings
+from langchain_core.embeddings import Embeddings
 from typing import List, Dict, Any, Optional, Tuple
 import logging
 import os
 from pathlib import Path
 from datetime import datetime
 
+from ..core.config import get_settings
+from ..core.providers import get_embeddings
+
 logger = logging.getLogger(__name__)
 
 class VectorStoreService:
     """Service for managing vector storage using ChromaDB"""
     
-    def __init__(self, 
-                 persist_directory: str = "./chroma_db",
-                 embedding_model: str = "nomic-embed-text",
-                 collection_name: str = "documents"):
-        self.persist_directory = Path(persist_directory)
+    def __init__(self,
+                 persist_directory: Optional[str] = None,
+                 embedding_model: Optional[str] = None,
+                 collection_name: str = "documents",
+                 embeddings: Optional[Embeddings] = None):
+        settings = get_settings()
+        self.persist_directory = Path(persist_directory or settings.chroma_dir)
         self.persist_directory.mkdir(exist_ok=True)
-        self.embedding_model = embedding_model
+        self.embedding_model = embedding_model or settings.embed_model
         self.collection_name = collection_name
-        self.embeddings = OllamaEmbeddings(model=embedding_model)
+        # One collection must only ever hold vectors from one embedding model: Vertex and
+        # nomic-embed-text vectors differ in dimension. Use a separate CHROMA_DIR per provider.
+        self.embeddings = embeddings or get_embeddings(model=self.embedding_model)
         self.vector_store = None
         self._initialize_vector_store()
-        logger.info(f"Initialized vector store service with directory: {persist_directory}")
+        logger.info(f"Initialized vector store service with directory: {self.persist_directory}")
     
     def _initialize_vector_store(self):
         """Initialize the ChromaDB vector store"""
