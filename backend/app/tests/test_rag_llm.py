@@ -5,6 +5,10 @@ Quick test script for RAG + LLM system - run this from backend directory
 import asyncio
 import logging
 
+import pytest
+
+pytestmark = pytest.mark.integration
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)

@@ -7,6 +7,10 @@ import logging
 import sys
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.integration
+
 # Add parent directory to path for imports
 sys.path.append('../..')
 
