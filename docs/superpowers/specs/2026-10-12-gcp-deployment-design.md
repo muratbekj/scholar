@@ -77,7 +77,7 @@ A frozen `Settings` dataclass built from `os.environ` by a cached `get_settings(
 
 **Commit 2, upgrade:**
 - Bump `langchain`, `langchain-chroma`, `langchain-ollama` and `langchain-community` to their 1.x-compatible lines (resolved on 2026-10-12: langchain 1.4.5, langchain-ollama 1.1.0, langchain-community 0.4.2, langchain-core 1.6.10; langchain-chroma pinned `>=1.0.0,<1.1` because 1.1.0 requires chromadb ≥1.3.5). Regenerate `uv.lock`.
-- Keep `chromadb` at the lowest version `langchain-chroma` 1.1 accepts, to limit changes to the on-disk format of existing `chroma_db/` data.
+- Pin `chromadb==1.0.20` in `pyproject.toml` (with `langchain-chroma<1.1`) so the on-disk format of existing `chroma_db/` data does not change.
 - Code edits are limited to import paths, if any are needed. The app imports only `langchain_ollama` and `langchain_chroma`, which keep their paths.
 
 **Commit 3, CI:** `.github/workflows/backend.yml` runs on every push. It installs uv, runs `uv sync --locked` in `backend/`, then `uv run pytest`.

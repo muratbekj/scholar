@@ -1922,7 +1922,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = ">=24.1.0" },
-    { name = "chromadb", specifier = ">=1.0.20" },
+    { name = "chromadb", specifier = "==1.0.20" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.116.1" },
     { name = "langchain", specifier = ">=1.4.5" },
     { name = "langchain-chroma", specifier = ">=1.0.0,<1.1" },

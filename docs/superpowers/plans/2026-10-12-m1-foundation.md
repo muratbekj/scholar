@@ -15,7 +15,7 @@
 - M1 makes zero behavior changes. No edits under `backend/app/` except test markers, plus import paths if the upgrade requires them.
 - Test edits are limited to markers and import paths.
 - Do not change prompts, chunking parameters (1,000 chars / 200 overlap), or API response shapes.
-- `chromadb` stays at **1.0.20** in `uv.lock`. Because of that, `langchain-chroma` is pinned `>=1.0.0,<1.1` (1.1.0 requires `chromadb>=1.3.5`; resolved 2026-10-12).
+- `chromadb` stays at **1.0.20** in `uv.lock`. Because of that, `langchain-chroma` is pinned `>=1.0.0,<1.1` (1.1.0 requires `chromadb>=1.3.5`; resolved 2026-10-12). The version is held by `chromadb==1.0.20` in `pyproject.toml` (added after the final review): the `langchain-chroma` cap alone does not block `uv lock --upgrade` from moving chromadb.
 - Do not touch Electron packaging. Electron starts the backend with `python -m uvicorn app.main:app`, so nothing changes there.
 - Do not commit credentials, `.env` files, `chroma_db/` or `uploads/` (already in `backend/.gitignore`).
 - All commands run from `backend/` unless stated otherwise.
