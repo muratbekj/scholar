@@ -42,3 +42,43 @@ def _reset_request_context():
     from app.core import request_context
 
     request_context.bind(None, None)
+
+
+@pytest.fixture
+def cloud_app(monkeypatch, tmp_path):
+    """The real app in cloud mode on throwaway local backends (no GCP, no Ollama, no LLM calls)."""
+    from types import SimpleNamespace
+
+    from fastapi.testclient import TestClient
+
+    from app.api.routes import files as files_routes
+    from app.core import guardrails, request_context
+    from app.main import app
+    from app.services import flashcard_service, qa_service, quiz_service, rag_pipeline
+    from app.services.document import DocumentService
+    from app.services.session_store import MemorySessionStore
+    from app.services.storage import LocalStorage
+    from app.services.vector_store import VectorStoreService
+    from app.tests.fakes import KeywordEmbeddings
+
+    monkeypatch.setattr(request_context, "cloud_mode", lambda: True)
+    monkeypatch.setattr(guardrails, "rate_limiter", guardrails.SlidingWindowRateLimiter())
+    documents = DocumentService(storage=LocalStorage(tmp_path / "uploads"))
+    vectors = VectorStoreService(persist_directory=str(tmp_path / "chroma"), embeddings=KeywordEmbeddings())
+    pipeline = rag_pipeline.rag_pipeline_service
+    monkeypatch.setattr(pipeline, "document_service", documents)
+    monkeypatch.setattr(pipeline, "vector_store_service", vectors)
+    monkeypatch.setattr(files_routes, "document_service", documents)
+    for service in (qa_service.qa_service, quiz_service.quiz_service, flashcard_service.flashcard_service):
+        monkeypatch.setattr(service, "document_service", documents)
+    # QA and quiz have heuristic fallbacks; flashcards need an LLM, so fake its one call
+    monkeypatch.setattr(qa_service.qa_service, "use_llm", False)
+    monkeypatch.setattr(quiz_service.quiz_service, "use_llm", False)
+
+    async def fake_flashcards(content):
+        return [{"id": "card-1", "front": "What do chloroplasts capture?", "back": "Light energy", "difficulty": "easy"}]
+
+    monkeypatch.setattr(flashcard_service, "llm_service", SimpleNamespace(generate_flashcards=fake_flashcards))
+    monkeypatch.setattr(qa_service.qa_service, "sessions", MemorySessionStore())
+    monkeypatch.setattr(quiz_service.quiz_service, "sessions", MemorySessionStore())
+    return SimpleNamespace(client=TestClient(app), documents=documents, vectors=vectors)

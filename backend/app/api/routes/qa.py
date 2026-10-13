@@ -2,7 +2,7 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ...models.qa import (
     QAMessage,
@@ -13,13 +13,14 @@ from ...models.qa import (
     QASessionCreate,
     QASessionResponse,
 )
+from ...core.guardrails import rate_limited
 from ...services.qa_service import qa_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/qa", tags=["qa"])
 
 
-@router.post("/ask", response_model=QAResponse)
+@router.post("/ask", response_model=QAResponse, dependencies=[Depends(rate_limited)])
 async def ask_question(request: QARequest):
     try:
         if not request.question.strip():
@@ -34,7 +35,7 @@ async def ask_question(request: QARequest):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/reflect", response_model=QAResponse)
+@router.post("/reflect", response_model=QAResponse, dependencies=[Depends(rate_limited)])
 async def submit_reflection(request: QAReflectionSubmitRequest):
     try:
         if not request.reflection.strip():

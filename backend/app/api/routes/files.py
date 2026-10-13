@@ -8,6 +8,7 @@ from ...models.file import FileUploadResponse, FileInfo, UploadError
 from ...services.document import document_service
 from ...services.extractor import DocumentExtractor
 from ...services.rag_pipeline import rag_pipeline_service
+from ...core.guardrails import DocumentTooLargeError, enforce_rate_limit, enforce_upload_size, rate_limited
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["files"])
@@ -37,10 +38,13 @@ async def upload_file(
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
+        enforce_upload_size(len(content))
         
         # Determine if embedding is needed based on study mode
         # QA mode needs embeddings for RAG, Quiz/Flashcard modes need content extraction but not embeddings
         enable_embedding = study_mode == "qa"
+        if enable_embedding:
+            enforce_rate_limit()
         
         if enable_embedding:
             # Process file through RAG pipeline for QA mode
@@ -112,6 +116,8 @@ async def upload_file(
         
     except HTTPException:
         raise
+    except DocumentTooLargeError as e:
+        raise HTTPException(status_code=413, detail=str(e))
     except Exception as e:
         logger.error(f"Error uploading file {file.filename}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -140,6 +146,10 @@ async def upload_file_with_embedding(
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Empty file")
+        enforce_upload_size(len(content))
+        
+        if enable_embedding:
+            enforce_rate_limit()
         
         # Process file through RAG pipeline
         result = await rag_pipeline_service.process_document_upload(
@@ -174,6 +184,8 @@ async def upload_file_with_embedding(
         
     except HTTPException:
         raise
+    except DocumentTooLargeError as e:
+        raise HTTPException(status_code=413, detail=str(e))
     except Exception as e:
         logger.error(f"Error uploading file {file.filename}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
@@ -281,7 +293,7 @@ async def get_supported_formats():
     """
     return document_service.get_supported_formats()
 
-@router.get("/search")
+@router.get("/search", dependencies=[Depends(rate_limited)])
 async def search_documents(
     query: str = Query(..., description="Search query"),
     k: int = Query(5, description="Number of results to return"),
@@ -304,7 +316,7 @@ async def search_documents(
         logger.error(f"Error searching documents: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[Depends(rate_limited)])
 async def get_processing_stats():
     """
     Get processing statistics and system health
