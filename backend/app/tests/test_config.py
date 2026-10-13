@@ -154,6 +154,24 @@ def test_separator_only_cors_is_config_error():
         Settings.from_env({"CORS_ORIGINS": " , ,"})
 
 
+def test_frontend_url_is_added_to_default_origins():
+    s = Settings.from_env({"FRONTEND_URL": " https://scholar.example/ "})
+    assert s.cors_origins == DEFAULT_CORS_ORIGINS + ("https://scholar.example",)
+
+
+def test_frontend_url_is_added_to_explicit_origins_once():
+    s = Settings.from_env({"CORS_ORIGINS": "https://a.example", "FRONTEND_URL": "https://a.example"})
+    assert s.cors_origins == ("https://a.example",)
+    s = Settings.from_env({"CORS_ORIGINS": "https://a.example", "FRONTEND_URL": "https://b.example"})
+    assert s.cors_origins == ("https://a.example", "https://b.example")
+
+
+@pytest.mark.parametrize("value", ["scholar.example", "*"])
+def test_frontend_url_without_scheme_is_config_error(value):
+    with pytest.raises(ConfigError, match="FRONTEND_URL"):
+        Settings.from_env({"FRONTEND_URL": value})
+
+
 def test_missing_cloud_packages_reported_with_install_hint():
     s = Settings.from_env({**VERTEX_OK, "STORAGE_BACKEND": "gcs", "GCS_BUCKET": "b"})
     problems = missing_cloud_packages(s, module_available=lambda name: False)

@@ -139,6 +139,7 @@ All settings are optional. With none set, Scholar runs fully locally on Ollama +
 | `CHROMA_DIR` | `./chroma_db` | Chroma storage directory |
 | `UPLOAD_DIR` | `uploads` | uploaded files and extracted text |
 | `CORS_ORIGINS` | localhost:3000/3001, 127.0.0.1:3000/3001, `null` | comma separated; `*` is not allowed |
+| `FRONTEND_URL` | none | deployed frontend origin, e.g. `https://scholar.example`; added to `CORS_ORIGINS` |
 | `VECTOR_BACKEND` | `chroma` | `chroma` or `pgvector` |
 | `DATABASE_URL` | none | SQLAlchemy psycopg URL; required for `pgvector` or `SESSION_BACKEND=postgres` |
 | `STORAGE_BACKEND` | `local` | `local` (UPLOAD_DIR) or `gcs` |
@@ -195,7 +196,7 @@ own documents and sessions. This is not authentication; Firebase Auth or IAP is 
 | `VECTOR_BACKEND` / `SESSION_BACKEND` | `pgvector` / `postgres` |
 | `DATABASE_URL` | from Secret Manager (below) |
 | `STORAGE_BACKEND` / `GCS_BUCKET` | `gcs` / your bucket |
-| `CORS_ORIGINS` | your frontend URL(s); set it explicitly in the cloud |
+| `FRONTEND_URL` | your frontend URL (added to the allowed CORS origins) |
 
 Never set `GOOGLE_API_KEY` or `GEMINI_API_KEY`: Vertex uses the service account (startup fails if they are set).
 
@@ -231,14 +232,14 @@ done
 
 ```bash
 gcloud run deploy scholar-api --source ./backend --region us-central1 \
-  --set-env-vars LLM_PROVIDER=vertex,VERTEX_LLM_MODEL=gemini-3.8-flash,VERTEX_EMBED_MODEL=gemini-embedding-001,GOOGLE_CLOUD_PROJECT=PROJECT_ID,VECTOR_BACKEND=pgvector,SESSION_BACKEND=postgres,STORAGE_BACKEND=gcs,GCS_BUCKET=PROJECT_ID-scholar-uploads,CORS_ORIGINS=https://YOUR_FRONTEND_URL \
+  --set-env-vars LLM_PROVIDER=vertex,VERTEX_LLM_MODEL=gemini-3.8-flash,VERTEX_EMBED_MODEL=gemini-embedding-001,GOOGLE_CLOUD_PROJECT=PROJECT_ID,VECTOR_BACKEND=pgvector,SESSION_BACKEND=postgres,STORAGE_BACKEND=gcs,GCS_BUCKET=PROJECT_ID-scholar-uploads,FRONTEND_URL=https://YOUR_FRONTEND_URL \
   --add-cloudsql-instances PROJECT_ID:us-central1:scholar-db \
   --set-secrets DATABASE_URL=scholar-db-url:latest \
   --min-instances 0 --max-instances 2
 ```
 
 Frontend: deploy `frontend/` (e.g. to Vercel) with `NEXT_PUBLIC_API_URL` set to the Cloud Run URL,
-then put that frontend URL in `CORS_ORIGINS` and redeploy the backend.
+then set `FRONTEND_URL` on the backend to that frontend URL and redeploy it.
 
 ## 🧪 Testing
 

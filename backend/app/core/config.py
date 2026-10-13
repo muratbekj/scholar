@@ -130,6 +130,14 @@ class Settings:
             if not cors_origins:
                 problems.append("CORS_ORIGINS is set but lists no origins")
 
+        # Browsers send Origin without a trailing slash, so a pasted "https://app.example/" would never match.
+        frontend_url = (get("FRONTEND_URL") or "").rstrip("/")
+        if frontend_url:
+            if not frontend_url.startswith(("http://", "https://")):
+                problems.append(f"FRONTEND_URL must start with http:// or https://, got {frontend_url!r}")
+            elif frontend_url not in cors_origins:
+                cors_origins += (frontend_url,)
+
         if (vector_backend == "pgvector" or session_backend == "postgres") and get("DATABASE_URL") is None:
             problems.append("DATABASE_URL is required when VECTOR_BACKEND=pgvector or SESSION_BACKEND=postgres")
         if storage_backend == "gcs" and get("GCS_BUCKET") is None:
