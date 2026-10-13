@@ -1,0 +1,89 @@
+name: backend
+
+# Push only: a PR's head commit already has this push run, so PRs don't run it twice.
+on:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # No Ollama in CI. Point the client at a closed port so any stray call fails fast.
+      OLLAMA_HOST: http://127.0.0.1:9
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.8"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Unit tests
+        run: uv run pytest
+
+  postgres:
+    # pgvector store and Postgres session tests against a real Postgres with the vector extension
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OLLAMA_HOST: http://127.0.0.1:9
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.8"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies (with the cloud extra)
+        run: uv sync --locked --extra cloud
+
+      - name: Postgres tests
+        run: uv run pytest -m postgres
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t scholar-api backend
+
+      - name: Image size
+        run: docker image ls scholar-api --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+
+      - name: Image serves /health on $PORT with no other configuration
+        run: |
+          docker run -d --name api -e PORT=9090 -p 9090:9090 scholar-api
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9090/health; then exit 0; fi
+            sleep 2
+          done
+          docker logs api
+          exit 1

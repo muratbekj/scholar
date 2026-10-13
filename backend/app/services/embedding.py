@@ -1,5 +1,6 @@
 # Embedding service for converting text into embeddings
-from langchain_ollama import OllamaEmbeddings
+from ..core.config import get_settings
+from ..core.providers import get_embeddings
 from typing import List, Dict, Any, Optional
 import logging
 import asyncio
@@ -17,18 +18,18 @@ class EmbeddingResult:
     error: Optional[str] = None
 
 class EmbeddingService:
-    """Service for generating embeddings using LangChain Ollama"""
+    """Service for generating embeddings with the configured provider"""
     
-    def __init__(self, model_name: str = "nomic-embed-text", 
-                 batch_size: int = 10, 
+    def __init__(self, model_name: Optional[str] = None,
+                 batch_size: int = 10,
                  max_retries: int = 3,
                  retry_delay: float = 1.0):
-        self.model_name = model_name
+        self.model_name = model_name or get_settings().embed_model
         self.batch_size = batch_size
         self.max_retries = max_retries
         self.retry_delay = retry_delay
-        self.embeddings = OllamaEmbeddings(model=model_name)
-        logger.info(f"Initialized embedding service with model: {model_name}")
+        self.embeddings = get_embeddings(model=self.model_name)
+        logger.info(f"Initialized embedding service with model: {self.model_name}")
     
     async def embed_text(self, text: str, metadata: Dict[str, Any] = None) -> EmbeddingResult:
         """Embed a single text with retry logic"""

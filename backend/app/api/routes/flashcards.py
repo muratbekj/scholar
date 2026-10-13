@@ -1,14 +1,15 @@
 # Flashcard API routes
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 import logging
 
 from ...models.flashcard import FlashcardRequest, FlashcardResponse
+from ...core.guardrails import rate_limited
 from ...services.flashcard_service import flashcard_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/flashcards", tags=["flashcards"])
 
-@router.post("/generate", response_model=FlashcardResponse)
+@router.post("/generate", response_model=FlashcardResponse, dependencies=[Depends(rate_limited)])
 async def generate_flashcards(request: FlashcardRequest):
     """
     Generate flashcards from an uploaded document

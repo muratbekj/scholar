@@ -29,7 +29,8 @@ from ..models.study import (
     SourceLink,
     SupportLevel,
 )
-from .document import DocumentService
+from .document import DocumentService, document_service as shared_document_service
+from .session_store import SessionStore, build_session_store
 from .llm_service import llm_service
 from .rag_pipeline import rag_pipeline_service
 
@@ -87,9 +88,10 @@ _REFLECTION_OVERLAP_STOPWORDS = frozenset(
 class QAService:
     """Service for handling QA sessions with reflection-gated RAG integration."""
 
-    def __init__(self, document_service: DocumentService = None, use_llm: bool = True):
-        self.document_service = document_service or DocumentService()
-        self.active_sessions: Dict[str, QASession] = {}
+    def __init__(self, document_service: DocumentService = None, use_llm: bool = True,
+                 sessions: Optional[SessionStore] = None):
+        self.document_service = document_service or shared_document_service
+        self.sessions = sessions or build_session_store()
         self.use_llm = use_llm
         self.reflection_min_words = REFLECTION_MIN_WORDS
         logger.info("Initialized QA Service with reflection-aware RAG integration")
@@ -103,7 +105,7 @@ class QAService:
             filename=session_data.filename,
             created_at=datetime.now(),
         )
-        self.active_sessions[session_id] = session
+        await self.sessions.put("qa", session_id, session)
         logger.info("Created QA session %s for file %s", session_id, session_data.filename)
         return self._build_session_response(session)
 
@@ -146,9 +148,10 @@ class QAService:
                     session.session_id,
                     response.pending_question_id,
                 )
+                await self.sessions.put("qa", session.session_id, session)
                 return response
 
-            return await self._finalize_answer(
+            response = await self._finalize_answer(
                 session=session,
                 question=request.question,
                 rag_context=rag_context,
@@ -160,6 +163,8 @@ class QAService:
                 recent_history_summary=recent_history_summary,
                 processing_time=(datetime.now() - start_time).total_seconds(),
             )
+            await self.sessions.put("qa", session.session_id, session)
+            return response
         except Exception as exc:
             processing_time = (datetime.now() - start_time).total_seconds()
             logger.error("Error generating answer: %s", exc)
@@ -220,11 +225,14 @@ class QAService:
         )
 
         session.pending_questions.pop(pending_exchange.pending_question_id, None)
+        await self.sessions.put("qa", session.session_id, session)
         return response
 
     async def _get_or_create_session(self, request: QARequest) -> QASession:
-        if request.session_id and request.session_id in self.active_sessions:
-            return self.active_sessions[request.session_id]
+        if request.session_id:
+            existing = await self.sessions.get("qa", request.session_id)
+            if existing is not None:
+                return existing
 
         if not request.file_id:
             raise ValueError("File ID is required for new sessions")
@@ -233,7 +241,7 @@ class QAService:
         session_response = await self.create_session(
             QASessionCreate(file_id=request.file_id, filename=filename)
         )
-        return self.active_sessions[session_response.session_id]
+        return await self.sessions.get("qa", session_response.session_id)
 
     async def _retrieve_rag_context(
         self,
@@ -1051,21 +1059,20 @@ class QAService:
         )
 
     async def get_session(self, session_id: str) -> Optional[QASession]:
-        return self.active_sessions.get(session_id)
+        return await self.sessions.get("qa", session_id)
 
     async def get_session_messages(self, session_id: str) -> List[QAMessage]:
         session = await self.get_session(session_id)
         return session.messages if session else []
 
     async def delete_session(self, session_id: str) -> bool:
-        if session_id in self.active_sessions:
-            del self.active_sessions[session_id]
+        if await self.sessions.delete("qa", session_id):
             logger.info("Deleted QA session %s", session_id)
             return True
         return False
 
     async def get_all_sessions(self) -> List[QASessionResponse]:
-        return [self._build_session_response(session) for session in self.active_sessions.values()]
+        return [self._build_session_response(session) for session in await self.sessions.list("qa")]
 
 
 qa_service = QAService()

@@ -2,7 +2,7 @@
 import logging
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ...models.quiz import (
     QuizQuestionResponse,
@@ -13,13 +13,14 @@ from ...models.quiz import (
     QuizSessionResponse,
     QuizSubmission,
 )
+from ...core.guardrails import rate_limited
 from ...services.quiz_service import quiz_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/quiz", tags=["quiz"])
 
 
-@router.post("/generate", response_model=QuizResponse)
+@router.post("/generate", response_model=QuizResponse, dependencies=[Depends(rate_limited)])
 async def generate_quiz(request: QuizRequest):
     try:
         if not request.file_id.strip():
@@ -61,7 +62,7 @@ async def get_quiz_questions(quiz_id: str):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/submit", response_model=QuizResult)
+@router.post("/submit", response_model=QuizResult, dependencies=[Depends(rate_limited)])
 async def submit_quiz(submission: QuizSubmission):
     try:
         if not submission.answers:
@@ -128,8 +129,8 @@ async def health_check():
         return {
             "status": "healthy",
             "service": "quiz-generation",
-            "active_quizzes": len(quiz_service.active_quizzes),
-            "active_sessions": len(quiz_service.active_sessions),
+            "active_quizzes": len(await quiz_service.sessions.list("quiz_def")),
+            "active_sessions": len(await quiz_service.sessions.list("quiz")),
             "llm_integration": "enabled" if quiz_service.use_llm else "disabled",
         }
     except Exception as exc:

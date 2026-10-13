@@ -7,7 +7,7 @@ from datetime import datetime
 from ..models.flashcard import (
     Flashcard, FlashcardRequest, FlashcardResponse, DifficultyLevel
 )
-from .document import DocumentService
+from .document import DocumentService, document_service as shared_document_service
 from .llm_service import llm_service
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,7 @@ class FlashcardService:
     """Service for generating flashcards from documents"""
     
     def __init__(self, document_service: DocumentService = None, use_llm: bool = True):
-        self.document_service = document_service or DocumentService()
+        self.document_service = document_service or shared_document_service
         self.use_llm = use_llm
         
         logger.info(f"Initialized Flashcard Service with LLM integration (LLM: {'enabled' if use_llm else 'disabled'})")

@@ -1,8 +1,7 @@
 # Document processing service
-import os
+import re
 import uuid
 import tempfile
-import shutil
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import logging
@@ -11,23 +10,35 @@ from datetime import datetime
 from .extractor import DocumentExtractor
 from .chunking import TextChunkingService
 from ..models.file import FileInfo, FileUploadResponse, UploadError
+from ..core import request_context
+from .storage import LocalStorage, Storage, build_storage
 
 logger = logging.getLogger(__name__)
+
+# Generated file ids are UUIDs; anything with path separators or dots never names a stored file.
+_SAFE_FILE_ID = re.compile(r"[A-Za-z0-9_-]+")
+
 
 class DocumentService:
     """Service for handling document uploads and processing"""
     
-    def __init__(self, upload_dir: str = "uploads", 
+    def __init__(self, upload_dir: Optional[str] = None,
                  large_document_threshold: int = 5000,  # characters
                  chunk_size: int = 1000,
-                 chunk_overlap: int = 200):
-        self.upload_dir = Path(upload_dir)
-        self.upload_dir.mkdir(exist_ok=True)
+                 chunk_overlap: int = 200,
+                 storage: Optional[Storage] = None):
+        self.storage = storage or (LocalStorage(upload_dir) if upload_dir else build_storage())
         self.large_document_threshold = large_document_threshold
         self.chunking_service = TextChunkingService(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
     
+    def _key(self, name: str) -> str:
+        """Storage key for a file name: '{client_id}/{name}' in cloud mode, '{name}' locally (spec D16)."""
+        client_id = request_context.scope_client_id()
+        return f"{client_id}/{name}" if client_id else name
+
     async def process_upload(self, file_content: bytes, filename: str) -> FileUploadResponse:
         """Process uploaded file and extract content"""
+        saved_keys: List[str] = []
         try:
             # Validate file format
             if not DocumentExtractor.is_supported_format(filename):
@@ -36,15 +47,12 @@ class DocumentService:
             # Generate unique file ID
             file_id = str(uuid.uuid4())
             file_ext = Path(filename).suffix.lower()
-            stored_filename = f"{file_id}{file_ext}"
-            file_path = self.upload_dir / stored_filename
             
-            # Save file
-            with open(file_path, 'wb') as f:
-                f.write(file_content)
-            
-            # Extract content
-            extracted_data = DocumentExtractor.extract_text(str(file_path), filename)
+            # Extract content from a request-local temporary copy; storage may be remote (GCS)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_path = Path(tmp_dir) / f"{file_id}{file_ext}"
+                tmp_path.write_bytes(file_content)
+                extracted_data = DocumentExtractor.extract_text(str(tmp_path), filename)
             
             # Create content summary
             content_summary = self._create_content_summary(extracted_data)
@@ -81,10 +89,11 @@ class DocumentService:
                 }
                 logger.info(f"Document {filename} is small ({len(full_text)} chars), no chunking needed")
             
-            # Save extracted text to a separate file
-            text_file_path = self.upload_dir / f"{file_id}_extracted.txt"
-            with open(text_file_path, 'w', encoding='utf-8') as f:
-                f.write(full_text)
+            # Save the original and the extracted text (quiz and flashcards read the text back later)
+            for key, data in ((self._key(f"{file_id}{file_ext}"), file_content),
+                              (self._key(f"{file_id}_extracted.txt"), full_text.encode("utf-8"))):
+                await self.storage.save_bytes(key, data)
+                saved_keys.append(key)
             
             logger.info(f"Successfully processed file {filename} with ID {file_id}")
             
@@ -99,9 +108,9 @@ class DocumentService:
             
         except Exception as e:
             logger.error(f"Error processing file {filename}: {str(e)}")
-            # Clean up file if it was saved
-            if 'file_path' in locals() and file_path.exists():
-                file_path.unlink()
+            # Clean up anything already saved
+            for key in locals().get('saved_keys', []):
+                await self.storage.delete(key)
             raise
     
     def _create_content_summary(self, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -135,53 +144,51 @@ class DocumentService:
     async def get_file_info(self, file_id: str) -> Optional[FileInfo]:
         """Get file information by ID"""
         try:
-            # Look for file in upload directory
-            for file_path in self.upload_dir.glob(f"{file_id}.*"):
-                if file_path.exists() and not file_path.name.endswith('_extracted.txt'):
-                    stat = file_path.stat()
-                    
-                    # Try to load content summary if available
-                    content_summary = None
-                    text_file_path = self.upload_dir / f"{file_id}_extracted.txt"
-                    if text_file_path.exists():
-                        try:
-                            with open(text_file_path, 'r', encoding='utf-8') as f:
-                                full_text = f.read()
-                                content_summary = {
-                                    'full_text': full_text,
-                                    'word_count': len(full_text.split()),
-                                    'character_count': len(full_text),
-                                    'format': file_path.suffix[1:] if file_path.suffix else 'unknown'
-                                }
-                        except Exception as e:
-                            logger.warning(f"Could not load content summary for {file_id}: {str(e)}")
-                    
-                    return FileInfo(
-                        filename=file_id,  # You might want to store original filename in a database
-                        size=stat.st_size,
-                        file_id=file_id,
-                        upload_time=datetime.fromtimestamp(stat.st_mtime),
-                        file_type=file_path.suffix[1:] if file_path.suffix else None,
-                        content_summary=content_summary
-                    )
+            if not _SAFE_FILE_ID.fullmatch(file_id):
+                return None
+            for key in await self.storage.list_prefix(self._key(f"{file_id}.")):
+                info = await self.storage.info(key)
+                if info is None:
+                    continue
+                suffix = Path(key).suffix
+                
+                # Try to load content summary if available
+                content_summary = None
+                full_text = await self.storage.read_text(self._key(f"{file_id}_extracted.txt"))
+                if full_text is not None:
+                    content_summary = {
+                        'full_text': full_text,
+                        'word_count': len(full_text.split()),
+                        'character_count': len(full_text),
+                        'format': suffix[1:] if suffix else 'unknown'
+                    }
+                
+                return FileInfo(
+                    filename=file_id,  # You might want to store original filename in a database
+                    size=info.size,
+                    file_id=file_id,
+                    upload_time=info.updated,
+                    file_type=suffix[1:] if suffix else None,
+                    content_summary=content_summary
+                )
             return None
         except Exception as e:
             logger.error(f"Error getting file info for {file_id}: {str(e)}")
             return None
     
     async def delete_file(self, file_id: str) -> bool:
-        """Delete file by ID"""
+        """Delete the uploaded file and its extracted text"""
         try:
+            if not _SAFE_FILE_ID.fullmatch(file_id):
+                return False
+            keys = await self.storage.list_prefix(self._key(f"{file_id}."))
+            keys.append(self._key(f"{file_id}_extracted.txt"))
             deleted_any = False
-            for file_path in self.upload_dir.glob(f"{file_id}.*"):
-                if file_path.exists():
-                    file_path.unlink()
+            for key in keys:
+                if await self.storage.delete(key):
                     deleted_any = True
-                    logger.info(f"Deleted file {file_path.name}")
-            
-            if deleted_any:
-                return True
-            return False
+                    logger.info(f"Deleted {key}")
+            return deleted_any
         except Exception as e:
             logger.error(f"Error deleting file {file_id}: {str(e)}")
             return False
@@ -189,11 +196,9 @@ class DocumentService:
     async def get_extracted_text(self, file_id: str) -> Optional[str]:
         """Get extracted text content for a file"""
         try:
-            text_file_path = self.upload_dir / f"{file_id}_extracted.txt"
-            if text_file_path.exists():
-                with open(text_file_path, 'r', encoding='utf-8') as f:
-                    return f.read()
-            return None
+            if not _SAFE_FILE_ID.fullmatch(file_id):
+                return None
+            return await self.storage.read_text(self._key(f"{file_id}_extracted.txt"))
         except Exception as e:
             logger.error(f"Error getting extracted text for {file_id}: {str(e)}")
             return None
@@ -241,3 +246,6 @@ class DocumentService:
     def get_supported_formats(self) -> List[str]:
         """Get list of supported file formats"""
         return list(DocumentExtractor.SUPPORTED_FORMATS.keys())
+
+# Shared instance: every service and route uses this one (spec D9)
+document_service = DocumentService()

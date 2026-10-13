@@ -4,9 +4,10 @@ import logging
 from datetime import datetime
 import asyncio
 
-from .document import DocumentService
-from .embedding import EmbeddingService, EmbeddingResult
-from .vector_store import VectorStoreService
+from .document import DocumentService, document_service as shared_document_service
+from .embedding import EmbeddingService, EmbeddingResult, embedding_service as shared_embedding_service
+from .vector_store import VectorStoreService, vector_store_service as shared_vector_store_service
+from ..core.guardrails import DocumentTooLargeError, check_chunk_count, check_text_size
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +18,9 @@ class RAGPipelineService:
                  document_service: DocumentService = None,
                  embedding_service: EmbeddingService = None,
                  vector_store_service: VectorStoreService = None):
-        self.document_service = document_service or DocumentService()
-        self.embedding_service = embedding_service or EmbeddingService()
-        self.vector_store_service = vector_store_service or VectorStoreService()
+        self.document_service = document_service or shared_document_service
+        self.embedding_service = embedding_service or shared_embedding_service
+        self.vector_store_service = vector_store_service or shared_vector_store_service
         
         logger.info("Initialized RAG Pipeline Service")
     
@@ -41,20 +42,23 @@ class RAGPipelineService:
             # Step 2: Prepare chunks for embedding
             logger.info("Step 2: Preparing chunks for embedding")
             chunks = await self._prepare_chunks_for_embedding(upload_result)
+            try:
+                check_text_size(len(upload_result.content_summary.get('full_text', '')))
+                check_chunk_count(len(chunks))
+            except DocumentTooLargeError:
+                await self.document_service.delete_file(file_id)
+                raise
             
-            # Step 3: Generate embeddings (if enabled)
-            embedding_results = None
-            if enable_embedding and chunks:
-                logger.info("Step 3: Generating embeddings")
-                embedding_results = await self._generate_embeddings_for_chunks(chunks, file_id)
-            
-            # Step 4: Store in vector database (if embeddings successful)
+            # Step 3: Embed and store (the vector store embeds each chunk exactly once; spec D7)
             vector_store_result = None
-            if embedding_results and any(result.success for result in embedding_results):
-                logger.info("Step 4: Storing in vector database")
+            if enable_embedding and chunks:
+                logger.info("Step 3: Embedding chunks and storing them in the vector database")
                 vector_store_result = await self._store_chunks_in_vector_db(chunks, file_id)
+
+            attempted = len(chunks) if vector_store_result is not None else 0
+            stored = vector_store_result.get('documents_added', 0) if vector_store_result and vector_store_result.get('success') else 0
             
-            # Step 5: Compile final result
+            # Step 4: Compile final result
             processing_time = (datetime.now() - start_time).total_seconds()
             
             result = {
@@ -72,10 +76,10 @@ class RAGPipelineService:
                 },
                 "embedding": {
                     "enabled": enable_embedding,
-                    "success": embedding_results is not None,
-                    "total_embeddings": len(embedding_results) if embedding_results else 0,
-                    "successful_embeddings": len([r for r in embedding_results if r.success]) if embedding_results else 0,
-                    "failed_embeddings": len([r for r in embedding_results if not r.success]) if embedding_results else 0
+                    "success": vector_store_result is not None,
+                    "total_embeddings": attempted,
+                    "successful_embeddings": stored,
+                    "failed_embeddings": attempted - stored
                 },
                 "vector_storage": {
                     "success": vector_store_result.get('success', False) if vector_store_result else False,
@@ -88,6 +92,8 @@ class RAGPipelineService:
             logger.info(f"RAG pipeline completed for file {filename} in {processing_time:.2f} seconds")
             return result
             
+        except DocumentTooLargeError:
+            raise
         except Exception as e:
             processing_time = (datetime.now() - start_time).total_seconds()
             error_msg = f"Error in RAG pipeline for file {filename}: {str(e)}"
@@ -134,39 +140,6 @@ class RAGPipelineService:
                     
         except Exception as e:
             logger.error(f"Error preparing chunks for embedding: {str(e)}")
-            return []
-    
-    async def _generate_embeddings_for_chunks(self, 
-                                            chunks: List[Dict[str, Any]], 
-                                            file_id: str) -> List[EmbeddingResult]:
-        """Generate embeddings for document chunks"""
-        try:
-            texts = [chunk['content'] for chunk in chunks]
-            metadata_list = []
-            
-            for chunk in chunks:
-                metadata = {
-                    'file_id': file_id,
-                    'chunk_id': chunk['chunk_id'],
-                    'start_index': chunk['start_index'],
-                    'end_index': chunk['end_index'],
-                    'chunk_strategy': chunk['metadata'].get('strategy', 'unknown'),
-                    'upload_time': datetime.now().isoformat()
-                }
-                metadata_list.append(metadata)
-            
-            # Generate embeddings in batches
-            embedding_results = await self.embedding_service.embed_batch(texts, metadata_list)
-            
-            # Log embedding statistics
-            successful = len([r for r in embedding_results if r.success])
-            failed = len([r for r in embedding_results if not r.success])
-            logger.info(f"Generated embeddings: {successful} successful, {failed} failed")
-            
-            return embedding_results
-            
-        except Exception as e:
-            logger.error(f"Error generating embeddings: {str(e)}")
             return []
     
     async def _store_chunks_in_vector_db(self, 
