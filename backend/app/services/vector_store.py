@@ -1,13 +1,15 @@
-# Vector store service for storing and retrieving embeddings
-from langchain_chroma import Chroma
-from langchain_core.embeddings import Embeddings
-from typing import List, Dict, Any, Optional, Tuple
+# Vector store service: Chroma on local disk, or pgvector in Postgres (VECTOR_BACKEND)
+import asyncio
 import logging
 import math
-import os
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+
+from ..core import request_context
 from ..core.config import get_settings
 from ..core.providers import get_embeddings
 
@@ -46,38 +48,138 @@ def chroma_distance_to_relevance(distance: float) -> float:
     return max(0.0, min(1.0, 1.0 - distance / 2.0))
 
 
+def cosine_distance_to_relevance(distance: float) -> float:
+    """PGVector's cosine distance (1 - cosine) -> cosine similarity clamped to [0, 1]."""
+    return max(0.0, min(1.0, 1.0 - distance))
+
+
+Row = Tuple[str, str, Dict[str, Any]]  # (id, content, metadata)
+
+
+class _ChromaBackend:
+    def __init__(self, persist_directory: Path, embeddings: Embeddings, collection_name: str):
+        from langchain_chroma import Chroma
+
+        self.store = Chroma(
+            persist_directory=str(persist_directory),
+            embedding_function=embeddings,
+            collection_name=collection_name,
+        )
+
+    @staticmethod
+    def _where(filters: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not filters:
+            return None
+        if len(filters) == 1:
+            return dict(filters)
+        return {"$and": [{key: value} for key, value in sorted(filters.items())]}
+
+    def add(self, texts: List[str], metadatas: List[Dict[str, Any]], ids: List[str]) -> None:
+        self.store.add_texts(texts=texts, metadatas=metadatas, ids=ids)
+
+    def search(self, query: str, k: int, filters: Dict[str, Any]) -> List[Tuple[Document, float]]:
+        results = self.store.similarity_search_with_score(query=query, k=k, filter=self._where(filters))
+        return [(doc, chroma_distance_to_relevance(float(score))) for doc, score in results]
+
+    def get(self, filters: Dict[str, Any], limit: Optional[int] = None) -> List[Row]:
+        kwargs: Dict[str, Any] = {}
+        where = self._where(filters)
+        if where is not None:
+            kwargs["where"] = where
+        if limit is not None:
+            kwargs["limit"] = limit
+        results = self.store.get(**kwargs)
+        return list(zip(results["ids"], results["documents"], results["metadatas"]))
+
+    def delete(self, ids: List[str]) -> None:
+        self.store.delete(ids=ids)
+
+
+class _PGVectorBackend:
+    def __init__(self, database_url: str, embeddings: Embeddings, collection_name: str):
+        from langchain_postgres import PGVector
+        from sqlalchemy import create_engine
+
+        self.collection_name = collection_name
+        self.engine = create_engine(database_url, pool_pre_ping=True)
+        self.store = PGVector(
+            embeddings=embeddings,
+            collection_name=collection_name,
+            connection=self.engine,
+            use_jsonb=True,
+        )
+
+    def add(self, texts: List[str], metadatas: List[Dict[str, Any]], ids: List[str]) -> None:
+        self.store.add_texts(texts=texts, metadatas=metadatas, ids=ids)
+
+    def search(self, query: str, k: int, filters: Dict[str, Any]) -> List[Tuple[Document, float]]:
+        results = self.store.similarity_search_with_score(query, k=k, filter=dict(filters) or None)
+        return [(doc, cosine_distance_to_relevance(float(score))) for doc, score in results]
+
+    def get(self, filters: Dict[str, Any], limit: Optional[int] = None) -> List[Row]:
+        from sqlalchemy import text
+
+        sql = (
+            "SELECT e.id, e.document, e.cmetadata FROM langchain_pg_embedding e "
+            "JOIN langchain_pg_collection c ON e.collection_id = c.uuid WHERE c.name = :collection"
+        )
+        params: Dict[str, Any] = {"collection": self.collection_name}
+        for i, (key, value) in enumerate(sorted(filters.items())):
+            sql += f" AND e.cmetadata ->> :key{i} = :value{i}"
+            params[f"key{i}"] = key
+            params[f"value{i}"] = str(value)
+        sql += " ORDER BY e.id"
+        if limit is not None:
+            sql += " LIMIT :limit"
+            params["limit"] = limit
+        with self.engine.connect() as conn:
+            rows = conn.execute(text(sql), params).all()
+        return [(row[0], row[1], dict(row[2] or {})) for row in rows]
+
+    def delete(self, ids: List[str]) -> None:
+        self.store.delete(ids=ids)
+
+
 class VectorStoreService:
-    """Service for managing vector storage using ChromaDB"""
+    """Service for vector storage: Chroma on local disk, or pgvector in Postgres (VECTOR_BACKEND).
+
+    In cloud mode every write carries the request's client_id and every read, delete and stats call
+    filters on it (spec D5). Backend calls run in asyncio.to_thread so they don't block the event loop.
+    """
     
     def __init__(self,
                  persist_directory: Optional[str] = None,
                  embedding_model: Optional[str] = None,
                  collection_name: str = "documents",
-                 embeddings: Optional[Embeddings] = None):
+                 embeddings: Optional[Embeddings] = None,
+                 backend: Optional[str] = None,
+                 database_url: Optional[str] = None):
         settings = get_settings()
-        self.persist_directory = Path(persist_directory or settings.chroma_dir)
-        self.persist_directory.mkdir(parents=True, exist_ok=True)
+        self.backend_name = backend or settings.vector_backend
         self.embedding_model = embedding_model or settings.embed_model
         self.collection_name = collection_name
         # One collection must only ever hold vectors from one embedding model: Vertex and
-        # nomic-embed-text vectors differ in dimension. Use a separate CHROMA_DIR per provider.
+        # nomic-embed-text vectors differ in dimension. Local (Chroma) and cloud (pgvector)
+        # deployments use separate stores; use a separate CHROMA_DIR per provider.
         self.embeddings = UnitNormalizedEmbeddings(embeddings or get_embeddings(model=self.embedding_model))
-        self.vector_store = None
-        self._initialize_vector_store()
-        logger.info(f"Initialized vector store service with directory: {self.persist_directory}")
-    
-    def _initialize_vector_store(self):
-        """Initialize the ChromaDB vector store"""
-        try:
-            self.vector_store = Chroma(
-                persist_directory=str(self.persist_directory),
-                embedding_function=self.embeddings,
-                collection_name=self.collection_name
-            )
-            logger.info(f"Vector store initialized successfully")
-        except Exception as e:
-            logger.error(f"Error initializing vector store: {str(e)}")
-            raise
+        if self.backend_name == "pgvector":
+            self.persist_directory = None
+            self.backend = _PGVectorBackend(database_url or settings.database_url, self.embeddings, collection_name)
+        else:
+            self.persist_directory = Path(persist_directory or settings.chroma_dir)
+            self.persist_directory.mkdir(parents=True, exist_ok=True)
+            self.backend = _ChromaBackend(self.persist_directory, self.embeddings, collection_name)
+        self.vector_store = self.backend.store
+        logger.info(f"Initialized {self.backend_name} vector store (collection {collection_name})")
+
+    @staticmethod
+    def _scoped(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Filters plus the request's client_id in cloud mode (raises IsolationError if none is bound)."""
+        scoped = dict(filters or {})
+        client_id = request_context.scope_client_id()
+        if client_id is not None:
+            scoped["client_id"] = client_id
+        return scoped
     
     async def add_documents(self, 
                           texts: List[str], 
@@ -88,15 +190,14 @@ class VectorStoreService:
             if not texts:
                 return {"success": False, "error": "No texts provided"}
             
-            metadatas = metadatas or [{}] * len(texts)
+            client_id = request_context.scope_client_id()
+            metadatas = [dict(m) for m in (metadatas or [{}] * len(texts))]
+            if client_id is not None:
+                for metadata in metadatas:
+                    metadata['client_id'] = client_id
             ids = ids or [f"doc_{i}_{datetime.now().timestamp()}" for i in range(len(texts))]
             
-            # Add documents to vector store
-            self.vector_store.add_texts(
-                texts=texts,
-                metadatas=metadatas,
-                ids=ids
-            )
+            await asyncio.to_thread(self.backend.add, texts, metadatas, ids)
             
             logger.info(f"Successfully added {len(texts)} documents to vector store")
             
@@ -153,24 +254,19 @@ class VectorStoreService:
                            query: str, 
                            k: int = 5, 
                            filter_metadata: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Search for similar documents"""
+        """Search for similar documents; similarity_score is a 0-1 relevance, higher is better"""
         try:
-            # Perform similarity search
-            results = self.vector_store.similarity_search_with_score(
-                query=query,
-                k=k,
-                filter=filter_metadata
-            )
+            results = await asyncio.to_thread(self.backend.search, query, k, self._scoped(filter_metadata))
             
-            # Format results
-            formatted_results = []
-            for doc, score in results:
-                formatted_results.append({
+            formatted_results = [
+                {
                     'content': doc.page_content,
                     'metadata': doc.metadata,
-                    'similarity_score': chroma_distance_to_relevance(float(score)),
+                    'similarity_score': score,
                     'id': doc.metadata.get('chunk_id', 'unknown')
-                })
+                }
+                for doc, score in results
+            ]
             
             logger.info(f"Found {len(formatted_results)} similar documents for query")
             return formatted_results
@@ -183,27 +279,16 @@ class VectorStoreService:
     async def search_by_file_id(self, file_id: str, query: str = None, k: int = 10) -> List[Dict[str, Any]]:
         """Search for documents/chunks by file ID"""
         try:
-            filter_metadata = {"file_id": file_id}
-            
             if query:
                 # Search with query within the file
-                return await self.search_similar(query, k, filter_metadata)
-            else:
-                # Get all chunks for the file
-                results = self.vector_store.get(
-                    where={"file_id": file_id},
-                    limit=k
-                )
-                
-                formatted_results = []
-                for i, doc_id in enumerate(results['ids']):
-                    formatted_results.append({
-                        'content': results['documents'][i],
-                        'metadata': results['metadatas'][i],
-                        'id': doc_id
-                    })
-                
-                return formatted_results
+                return await self.search_similar(query, k, {"file_id": file_id})
+            
+            # Get all chunks for the file
+            rows = await asyncio.to_thread(self.backend.get, self._scoped({"file_id": file_id}), k)
+            return [
+                {'content': content, 'metadata': metadata, 'id': doc_id}
+                for doc_id, content, metadata in rows
+            ]
                 
         except Exception as e:
             error_msg = f"Error searching by file ID {file_id}: {str(e)}"
@@ -213,23 +298,20 @@ class VectorStoreService:
     async def delete_file_documents(self, file_id: str) -> Dict[str, Any]:
         """Delete all documents/chunks for a specific file"""
         try:
-            # Get all document IDs for the file
-            results = self.vector_store.get(
-                where={"file_id": file_id}
-            )
+            rows = await asyncio.to_thread(self.backend.get, self._scoped({"file_id": file_id}))
+            ids = [doc_id for doc_id, _, _ in rows]
             
-            if not results['ids']:
+            if not ids:
                 return {"success": True, "message": "No documents found for file"}
             
-            # Delete documents
-            self.vector_store.delete(ids=results['ids'])
+            await asyncio.to_thread(self.backend.delete, ids)
             
-            logger.info(f"Deleted {len(results['ids'])} documents for file {file_id}")
+            logger.info(f"Deleted {len(ids)} documents for file {file_id}")
             
             return {
                 "success": True,
-                "documents_deleted": len(results['ids']),
-                "ids": results['ids']
+                "documents_deleted": len(ids),
+                "ids": ids
             }
             
         except Exception as e:
@@ -238,25 +320,17 @@ class VectorStoreService:
             return {"success": False, "error": error_msg}
     
     async def get_collection_stats(self) -> Dict[str, Any]:
-        """Get statistics about the vector store collection"""
+        """Get statistics about the vector store collection (the caller's documents in cloud mode)"""
         try:
-            # Get all documents
-            results = self.vector_store.get()
-            
-            total_documents = len(results['ids']) if results['ids'] else 0
-            
-            # Count unique files
-            unique_files = set()
-            for metadata in results['metadatas']:
-                if metadata and 'file_id' in metadata:
-                    unique_files.add(metadata['file_id'])
+            rows = await asyncio.to_thread(self.backend.get, self._scoped())
+            unique_files = {metadata['file_id'] for _, _, metadata in rows if metadata and 'file_id' in metadata}
             
             return {
-                "total_documents": total_documents,
+                "total_documents": len(rows),
                 "unique_files": len(unique_files),
                 "collection_name": self.collection_name,
                 "embedding_model": self.embedding_model,
-                "persist_directory": str(self.persist_directory)
+                "persist_directory": str(self.persist_directory) if self.persist_directory else self.backend_name
             }
             
         except Exception as e:
@@ -271,7 +345,7 @@ class VectorStoreService:
             stats = await self.get_collection_stats()
             
             # Test embedding generation
-            test_embedding = self.embeddings.embed_query("test")
+            test_embedding = await asyncio.to_thread(self.embeddings.embed_query, "test")
             
             return {
                 "status": "healthy",
