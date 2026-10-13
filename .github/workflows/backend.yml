@@ -31,6 +31,42 @@ jobs:
       - name: Unit tests
         run: uv run pytest
 
+  postgres:
+    # pgvector store and Postgres session tests against a real Postgres with the vector extension
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OLLAMA_HOST: http://127.0.0.1:9
+      TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.8"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies (with the cloud extra)
+        run: uv sync --locked --extra cloud
+
+      - name: Postgres tests
+        run: uv run pytest -m postgres
+
   docker:
     runs-on: ubuntu-latest
     steps:
