@@ -147,6 +147,8 @@ All settings are optional. With none set, Scholar runs fully locally on Ollama +
 | `MAX_UPLOAD_MB` | `20` | cloud mode only; larger uploads get 413 |
 | `MAX_CHUNKS_PER_DOC` | `500` | cloud mode only; larger documents get 413 |
 | `RATE_LIMIT_PER_MIN` | `20` | cloud mode only; LLM/embedding calls per client per instance, then 429 |
+| `RATE_LIMIT_GLOBAL_PER_MIN` | `100` | cloud mode only; LLM/embedding calls per instance across all clients (client ids are self-chosen) |
+| `MAX_TEXT_CHARS` | `500000` | cloud mode only; documents with more extracted text get 413 (bounds LLM prompt size) |
 
 ### Running with Vertex AI (Gemini) locally
 

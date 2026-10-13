@@ -65,3 +65,46 @@ def test_local_mode_has_no_limits(monkeypatch, small_limits):
     check_chunk_count(10_000)
     for _ in range(5):
         enforce_rate_limit()
+
+
+# --- review fixes: rotating client ids, unpunctuated text, limiter memory ------------
+
+@pytest.fixture
+def tight_limits(monkeypatch):
+    limits = Settings.from_env({"RATE_LIMIT_PER_MIN": "100", "RATE_LIMIT_GLOBAL_PER_MIN": "3",
+                                "MAX_TEXT_CHARS": "1000"})
+    monkeypatch.setattr(guardrails, "get_settings", lambda: limits)
+
+
+def test_rotating_client_ids_still_hit_the_instance_wide_limit(cloud_app, tight_limits):
+    statuses = [
+        cloud_app.client.post("/qa/ask", json={"question": "q", "file_id": "f", "filename": "n"},
+                              headers={"X-Client-Id": str(uuid.uuid4())}).status_code
+        for _ in range(4)
+    ]
+    assert statuses == [200, 200, 200, 429]
+
+
+async def test_unpunctuated_text_over_the_text_limit_is_413_and_not_stored(cloud_app, tight_limits):
+    text = ("lorem ipsum dolor sit amet " * 100).encode()  # one sentence-chunk, 2700 chars
+    response = cloud_app.client.post("/files/upload", params={"study_mode": "quiz"},
+                                     files={"file": ("wall.txt", text, "text/plain")}, headers={"X-Client-Id": A})
+    assert response.status_code == 413
+    assert await cloud_app.documents.storage.list_prefix("") == []
+
+
+def test_limiter_forgets_idle_clients():
+    now = [0.0]
+    limiter = SlidingWindowRateLimiter(window_seconds=60, clock=lambda: now[0])
+    for i in range(1000):
+        limiter.hit(f"client-{i}", 5)
+    now[0] = 61.0
+    limiter.hit("fresh", 5)
+    assert limiter.tracked_keys() == 1
+
+
+def test_text_limits_parsed_and_validated():
+    assert Settings.from_env({}).max_text_chars == 500_000
+    assert Settings.from_env({}).rate_limit_global_per_min == 100
+    with pytest.raises(Exception, match="MAX_TEXT_CHARS"):
+        Settings.from_env({"MAX_TEXT_CHARS": "0"})

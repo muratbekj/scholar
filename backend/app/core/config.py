@@ -53,6 +53,8 @@ class Settings:
     max_upload_mb: int = 20
     max_chunks_per_doc: int = 500
     rate_limit_per_min: int = 20
+    rate_limit_global_per_min: int = 100
+    max_text_chars: int = 500_000
 
     @property
     def cloud_mode(self) -> bool:
@@ -106,6 +108,8 @@ class Settings:
         max_upload_mb = positive_int("MAX_UPLOAD_MB", cls.max_upload_mb)
         max_chunks_per_doc = positive_int("MAX_CHUNKS_PER_DOC", cls.max_chunks_per_doc)
         rate_limit_per_min = positive_int("RATE_LIMIT_PER_MIN", cls.rate_limit_per_min)
+        rate_limit_global_per_min = positive_int("RATE_LIMIT_GLOBAL_PER_MIN", cls.rate_limit_global_per_min)
+        max_text_chars = positive_int("MAX_TEXT_CHARS", cls.max_text_chars)
 
         thinking_budget: Optional[int] = None
         raw_budget = get("VERTEX_THINKING_BUDGET")
@@ -164,6 +168,8 @@ class Settings:
             max_upload_mb=max_upload_mb,
             max_chunks_per_doc=max_chunks_per_doc,
             rate_limit_per_min=rate_limit_per_min,
+            rate_limit_global_per_min=rate_limit_global_per_min,
+            max_text_chars=max_text_chars,
         )
 
 

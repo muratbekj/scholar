@@ -1,6 +1,8 @@
-"""Cost guardrails for cloud mode (spec D13): upload size, chunks per document, per-client rate limit.
+"""Cost guardrails for cloud mode (spec D13): upload size, extracted text size, chunks per document,
+and rate limits per client and per instance.
 
-Local mode is unaffected. The rate limit is in memory, per Cloud Run instance.
+Local mode is unaffected. Rate limits are in memory, per instance. X-Client-Id is chosen by the caller,
+so the instance-wide limit is what actually bounds spend when someone rotates client ids.
 """
 import math
 import threading
@@ -26,6 +28,15 @@ def enforce_upload_size(num_bytes: int) -> None:
         raise HTTPException(status_code=413, detail=f"File exceeds the {limit_mb} MB upload limit")
 
 
+def check_text_size(num_chars: int) -> None:
+    """Bounds the text that quiz/flashcard prompts send to the LLM (unpunctuated text is a single chunk)."""
+    if not request_context.cloud_mode():
+        return
+    limit = get_settings().max_text_chars
+    if num_chars > limit:
+        raise DocumentTooLargeError(f"Document has {num_chars} characters of text; the limit is {limit}")
+
+
 def check_chunk_count(num_chunks: int) -> None:
     if not request_context.cloud_mode():
         return
@@ -40,11 +51,24 @@ class SlidingWindowRateLimiter:
         self.clock = clock
         self._hits: Dict[str, Deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
+        self._last_sweep = clock()
+
+    def tracked_keys(self) -> int:
+        return len(self._hits)
+
+    def _sweep(self, now: float) -> None:
+        """Forget keys with no hits inside the window (callers can mint unlimited client ids)."""
+        if now - self._last_sweep < self.window_seconds:
+            return
+        self._last_sweep = now
+        for key in [k for k, hits in self._hits.items() if not hits or now - hits[-1] >= self.window_seconds]:
+            del self._hits[key]
 
     def hit(self, key: str, limit: int) -> Optional[float]:
         """Record a call; returns None if allowed, else the seconds until the next call is allowed."""
         now = self.clock()
         with self._lock:
+            self._sweep(now)
             hits = self._hits[key]
             while hits and now - hits[0] >= self.window_seconds:
                 hits.popleft()
@@ -60,7 +84,10 @@ rate_limiter = SlidingWindowRateLimiter()
 def enforce_rate_limit() -> None:
     if not request_context.cloud_mode():
         return
-    retry_after = rate_limiter.hit(request_context.scope_client_id(), get_settings().rate_limit_per_min)
+    settings = get_settings()
+    retry_after = rate_limiter.hit(f"client:{request_context.scope_client_id()}", settings.rate_limit_per_min)
+    if retry_after is None:
+        retry_after = rate_limiter.hit("instance", settings.rate_limit_global_per_min)
     if retry_after is not None:
         raise HTTPException(
             status_code=429,

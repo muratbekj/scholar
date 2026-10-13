@@ -7,7 +7,7 @@ import asyncio
 from .document import DocumentService, document_service as shared_document_service
 from .embedding import EmbeddingService, EmbeddingResult, embedding_service as shared_embedding_service
 from .vector_store import VectorStoreService, vector_store_service as shared_vector_store_service
-from ..core.guardrails import DocumentTooLargeError, check_chunk_count
+from ..core.guardrails import DocumentTooLargeError, check_chunk_count, check_text_size
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class RAGPipelineService:
             logger.info("Step 2: Preparing chunks for embedding")
             chunks = await self._prepare_chunks_for_embedding(upload_result)
             try:
+                check_text_size(len(upload_result.content_summary.get('full_text', '')))
                 check_chunk_count(len(chunks))
             except DocumentTooLargeError:
                 await self.document_service.delete_file(file_id)
