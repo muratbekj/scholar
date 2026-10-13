@@ -32,7 +32,7 @@ def test_vertex_settings_select_vertex_models():
     assert s.llm_provider == "vertex"
     assert s.llm_model == "gemini-test-flash"
     assert s.embed_model == "gemini-embedding-001"
-    assert s.google_cloud_location == "us-central1"
+    assert s.google_cloud_location == "global"  # Gemini 3.x models are served only from global
 
 
 def test_provider_is_case_insensitive():
