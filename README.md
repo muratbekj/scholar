@@ -135,7 +135,7 @@ All settings are optional. With none set, Scholar runs fully locally on Ollama +
 | `VERTEX_EMBED_MODEL` | none | required for `vertex`, e.g. `gemini-embedding-001` |
 | `VERTEX_THINKING_BUDGET` | model default | optional thinking-token budget for Gemini |
 | `GOOGLE_CLOUD_PROJECT` | none | required for `vertex` |
-| `GOOGLE_CLOUD_LOCATION` | `us-central1` | Vertex region |
+| `GOOGLE_CLOUD_LOCATION` | `us-central1` | Vertex location; Gemini 3.x models are served only from `global` |
 | `CHROMA_DIR` | `./chroma_db` | Chroma storage directory |
 | `UPLOAD_DIR` | `uploads` | uploaded files and extracted text |
 | `CORS_ORIGINS` | localhost:3000/3001, 127.0.0.1:3000/3001, `null` | comma separated; `*` is not allowed |
@@ -145,10 +145,14 @@ All settings are optional. With none set, Scholar runs fully locally on Ollama +
 ```bash
 gcloud auth application-default login          # Vertex uses ADC; never set GOOGLE_API_KEY / GEMINI_API_KEY
 cd backend && uv sync --extra cloud
-LLM_PROVIDER=vertex GOOGLE_CLOUD_PROJECT=your-project \
-VERTEX_LLM_MODEL=<gemini model> VERTEX_EMBED_MODEL=gemini-embedding-001 \
+LLM_PROVIDER=vertex GOOGLE_CLOUD_PROJECT=your-project GOOGLE_CLOUD_LOCATION=global \
+VERTEX_LLM_MODEL=gemini-3.8-flash VERTEX_EMBED_MODEL=gemini-embedding-001 \
 CHROMA_DIR=./chroma_db_vertex uv run uvicorn app.main:app --reload
 ```
+
+Gemini 3.x models return 404 from regional locations such as `us-central1`; use `global`.
+When a model call fails, the app falls back to non-AI heuristic answers and still returns 200,
+so check the server log for `Error calling model` if output looks generic.
 
 Use a separate `CHROMA_DIR` per provider: Vertex and Ollama embeddings have different
 dimensions and must never share a collection.
