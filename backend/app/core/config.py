@@ -6,10 +6,12 @@ local setup: Ollama for the LLM and embeddings, Chroma on local disk.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Callable, List, Mapping, Optional, Tuple
+from typing import Callable, List, Mapping, MutableMapping, Optional, Tuple
 
 DEFAULT_CORS_ORIGINS: Tuple[str, ...] = (
     "http://localhost:3000",
@@ -155,7 +157,7 @@ class Settings:
             chroma_dir=get("CHROMA_DIR") or cls.chroma_dir,
             cors_origins=cors_origins,
             vector_backend=vector_backend,
-            database_url=get("DATABASE_URL"),
+            database_url=_with_psycopg_driver(get("DATABASE_URL")),
             storage_backend=storage_backend,
             gcs_bucket=get("GCS_BUCKET"),
             session_backend=session_backend,
@@ -163,6 +165,32 @@ class Settings:
             max_chunks_per_doc=max_chunks_per_doc,
             rate_limit_per_min=rate_limit_per_min,
         )
+
+
+def _with_psycopg_driver(url: Optional[str]) -> Optional[str]:
+    """Hosted Postgres (e.g. Railway) hands out postgresql:// URLs; SQLAlchemy needs the psycopg 3 driver named."""
+    if url is None:
+        return None
+    for scheme in ("postgresql://", "postgres://"):
+        if url.startswith(scheme):
+            return "postgresql+psycopg://" + url[len(scheme):]
+    return url
+
+
+def apply_credentials_env(env: MutableMapping[str, str] = os.environ, directory: Optional[str] = None) -> None:
+    """Hosts without Google's metadata server (e.g. Railway) pass a service-account key as
+    GOOGLE_CREDENTIALS_JSON; write it to a private file and point Application Default Credentials at it."""
+    raw = (env.get("GOOGLE_CREDENTIALS_JSON") or "").strip()
+    if not raw or env.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return
+    try:
+        json.loads(raw)
+    except ValueError:
+        raise ConfigError("Invalid configuration:\n  - GOOGLE_CREDENTIALS_JSON is not valid JSON") from None
+    fd, path = tempfile.mkstemp(prefix="gcp-credentials-", suffix=".json", dir=directory)
+    with os.fdopen(fd, "w") as f:  # mkstemp creates the file with mode 0600
+        f.write(raw)
+    env["GOOGLE_APPLICATION_CREDENTIALS"] = path
 
 
 def _module_available(name: str) -> bool:
