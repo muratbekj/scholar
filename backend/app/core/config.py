@@ -5,6 +5,7 @@ local setup: Ollama for the LLM and embeddings, Chroma on local disk.
 """
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import os
@@ -183,16 +184,43 @@ def _with_psycopg_driver(url: Optional[str]) -> Optional[str]:
     return url
 
 
+def _decode_credentials(raw: str) -> str:
+    """Accept the key file as JSON (optionally wrapped in quotes) or base64-encoded JSON."""
+    candidates = [raw]
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
+        candidates.append(raw[1:-1].strip())
+    if not raw.startswith("{"):
+        try:
+            candidates.append(base64.b64decode(raw, validate=True).decode("utf-8").strip())
+        except (ValueError, UnicodeDecodeError):
+            pass
+    for candidate in candidates:
+        try:
+            json.loads(candidate)
+            return candidate
+        except ValueError:
+            continue
+    # Describe the value without echoing any of it: it is a secret.
+    try:
+        json.loads(raw)
+        detail = ""
+    except ValueError as exc:
+        detail = f"; JSON error at line {exc.lineno} column {exc.colno}"
+    first = raw[0] if raw[0] in "{['\"" else "?"
+    raise ConfigError(
+        "Invalid configuration:\n  - GOOGLE_CREDENTIALS_JSON is not valid JSON or base64-encoded JSON "
+        f"(got {len(raw)} characters, starts with '{first}'{detail}). Paste the whole key file as one line "
+        "via the variable form, or base64-encode it."
+    )
+
+
 def apply_credentials_env(env: MutableMapping[str, str] = os.environ, directory: Optional[str] = None) -> None:
     """Hosts without Google's metadata server (e.g. Railway) pass a service-account key as
     GOOGLE_CREDENTIALS_JSON; write it to a private file and point Application Default Credentials at it."""
     raw = (env.get("GOOGLE_CREDENTIALS_JSON") or "").strip()
     if not raw or env.get("GOOGLE_APPLICATION_CREDENTIALS"):
         return
-    try:
-        json.loads(raw)
-    except ValueError:
-        raise ConfigError("Invalid configuration:\n  - GOOGLE_CREDENTIALS_JSON is not valid JSON") from None
+    raw = _decode_credentials(raw)
     fd, path = tempfile.mkstemp(prefix="gcp-credentials-", suffix=".json", dir=directory)
     with os.fdopen(fd, "w") as f:  # mkstemp creates the file with mode 0600
         f.write(raw)

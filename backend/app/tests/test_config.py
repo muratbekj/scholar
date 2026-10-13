@@ -223,3 +223,29 @@ def test_no_credentials_json_is_a_no_op(tmp_path):
     env = {}
     apply_credentials_env(env, directory=tmp_path)
     assert env == {}
+
+
+def test_base64_credentials_are_accepted(tmp_path):
+    import base64
+
+    key = {"type": "service_account", "project_id": "p"}
+    env = {"GOOGLE_CREDENTIALS_JSON": base64.b64encode(json.dumps(key, indent=2).encode()).decode()}
+    apply_credentials_env(env, directory=tmp_path)
+    assert json.loads(open(env["GOOGLE_APPLICATION_CREDENTIALS"]).read()) == key
+
+
+def test_json_wrapped_in_quotes_is_accepted(tmp_path):
+    key = {"type": "service_account"}
+    env = {"GOOGLE_CREDENTIALS_JSON": "'" + json.dumps(key) + "'"}
+    apply_credentials_env(env, directory=tmp_path)
+    assert json.loads(open(env["GOOGLE_APPLICATION_CREDENTIALS"]).read()) == key
+
+
+def test_invalid_credentials_error_explains_without_leaking_the_secret(tmp_path):
+    secret = '{\n  "private_key": "-----BEGIN PRIVATE KEY-----SECRETMATERIAL'  # truncated paste
+    with pytest.raises(ConfigError) as exc:
+        apply_credentials_env({"GOOGLE_CREDENTIALS_JSON": secret}, directory=tmp_path)
+    message = str(exc.value)
+    assert "SECRETMATERIAL" not in message and "PRIVATE" not in message
+    assert f"{len(secret)} characters" in message
+    assert "starts with '{'" in message
