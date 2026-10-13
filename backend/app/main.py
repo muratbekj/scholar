@@ -1,8 +1,9 @@
-from .core.config import ConfigError, get_settings
+from .core.config import ConfigError, apply_credentials_env, get_settings
 
 try:
     # Validate configuration before any service is constructed (services build clients at import).
     settings = get_settings()
+    apply_credentials_env()
 except ConfigError as exc:
     raise SystemExit(str(exc)) from None
 

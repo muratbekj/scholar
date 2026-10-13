@@ -1,3 +1,4 @@
+import os
 import pytest
 
 from app.core.config import DEFAULT_CORS_ORIGINS, ConfigError, Settings
@@ -176,3 +177,49 @@ def test_get_settings_fails_when_cloud_packages_missing(monkeypatch):
     finally:
         monkeypatch.undo()
         config_mod.get_settings.cache_clear()
+
+
+# --- Railway: credentials from an env var, Postgres URL scheme ------------------------
+
+import json
+import stat
+
+from app.core.config import apply_credentials_env
+
+
+@pytest.mark.parametrize("url", ["postgresql://u:p@h:5432/db", "postgres://u:p@h:5432/db"])
+def test_plain_postgres_urls_use_the_psycopg_driver(url):
+    s = Settings.from_env({"VECTOR_BACKEND": "pgvector", "DATABASE_URL": url})
+    assert s.database_url == "postgresql+psycopg://u:p@h:5432/db"
+
+
+def test_explicit_driver_urls_are_kept():
+    url = "postgresql+psycopg://u:p@/db?host=/cloudsql/p:r:i"
+    assert Settings.from_env({"SESSION_BACKEND": "postgres", "DATABASE_URL": url}).database_url == url
+
+
+def test_credentials_json_is_written_to_a_private_file(tmp_path):
+    key = {"type": "service_account", "project_id": "p", "client_email": "sa@p.iam.gserviceaccount.com"}
+    env = {"GOOGLE_CREDENTIALS_JSON": json.dumps(key)}
+    apply_credentials_env(env, directory=tmp_path)
+    path = env["GOOGLE_APPLICATION_CREDENTIALS"]
+    assert json.loads(open(path).read()) == key
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+
+
+def test_existing_credentials_path_wins(tmp_path):
+    env = {"GOOGLE_CREDENTIALS_JSON": "{}", "GOOGLE_APPLICATION_CREDENTIALS": "/keys/sa.json"}
+    apply_credentials_env(env, directory=tmp_path)
+    assert env["GOOGLE_APPLICATION_CREDENTIALS"] == "/keys/sa.json"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_invalid_credentials_json_is_a_config_error(tmp_path):
+    with pytest.raises(ConfigError, match="GOOGLE_CREDENTIALS_JSON"):
+        apply_credentials_env({"GOOGLE_CREDENTIALS_JSON": "{not json"}, directory=tmp_path)
+
+
+def test_no_credentials_json_is_a_no_op(tmp_path):
+    env = {}
+    apply_credentials_env(env, directory=tmp_path)
+    assert env == {}
