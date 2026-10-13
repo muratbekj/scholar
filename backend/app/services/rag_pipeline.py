@@ -7,6 +7,7 @@ import asyncio
 from .document import DocumentService, document_service as shared_document_service
 from .embedding import EmbeddingService, EmbeddingResult, embedding_service as shared_embedding_service
 from .vector_store import VectorStoreService, vector_store_service as shared_vector_store_service
+from ..core.guardrails import DocumentTooLargeError, check_chunk_count
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ class RAGPipelineService:
             # Step 2: Prepare chunks for embedding
             logger.info("Step 2: Preparing chunks for embedding")
             chunks = await self._prepare_chunks_for_embedding(upload_result)
+            try:
+                check_chunk_count(len(chunks))
+            except DocumentTooLargeError:
+                await self.document_service.delete_file(file_id)
+                raise
             
             # Step 3: Embed and store (the vector store embeds each chunk exactly once; spec D7)
             vector_store_result = None
@@ -85,6 +91,8 @@ class RAGPipelineService:
             logger.info(f"RAG pipeline completed for file {filename} in {processing_time:.2f} seconds")
             return result
             
+        except DocumentTooLargeError:
+            raise
         except Exception as e:
             processing_time = (datetime.now() - start_time).total_seconds()
             error_msg = f"Error in RAG pipeline for file {filename}: {str(e)}"
