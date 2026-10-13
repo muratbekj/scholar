@@ -1,6 +1,24 @@
 // API service layer for backend communication
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+const CLIENT_ID_KEY = 'scholar-client-id';
+
+type ClientIdStorage = Pick<Storage, 'getItem' | 'setItem'>;
+
+// Identifies this browser to the backend, which keeps each client's documents and sessions separate.
+// This is not authentication. TODO: replace with Firebase Auth or IAP identities.
+export function getClientId(
+  storage: ClientIdStorage | undefined = typeof window !== 'undefined' ? window.localStorage : undefined
+): string {
+  const existing = storage?.getItem(CLIENT_ID_KEY);
+  if (existing) {
+    return existing;
+  }
+  const clientId = crypto.randomUUID();
+  storage?.setItem(CLIENT_ID_KEY, clientId);
+  return clientId;
+}
+
 // Types matching backend models
 export interface FileUploadResponse {
   message: string;
@@ -274,11 +292,12 @@ class ApiService {
     
     try {
       const response = await fetch(url, {
+        ...options,
         headers: {
           'Content-Type': 'application/json',
           ...options.headers,
+          'X-Client-Id': getClientId(),
         },
-        ...options,
       });
 
       if (!response.ok) {
@@ -303,6 +322,7 @@ class ApiService {
     try {
       const response = await fetch(url, {
         method: 'POST',
+        headers: { 'X-Client-Id': getClientId() },
         body: formData,
       });
 
