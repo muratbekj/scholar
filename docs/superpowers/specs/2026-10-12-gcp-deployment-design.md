@@ -36,6 +36,7 @@ Scope: `backend/`, plus one change in `frontend/lib/api.ts` (the client id heade
 | D13 | Cloud-mode cost guardrails: maximum upload size, maximum chunks per document, and a per-`client_id` rate limit on LLM-calling routes. They return 413, 413 and 429. Enforced only in cloud mode, so local behavior stays unchanged. | Bounds Vertex spend from a single client or file on a public URL. |
 | D14 | In M4, groundedness is scored by the separate judge model, not the app's critic. Critic-vs-judge agreement on per-sentence support labels is reported as its own metric. | The critic shouldn't grade itself. The agreement number measures how much the in-app critic can be trusted. |
 | D15 | `GOOGLE_CLOUD_LOCATION` defaults to `global`, not `us-central1`. | Verified 2026-10-12: gemini-3.x models return 404 from `us-central1` and work from `global`; gemini-embedding-001 works from `global` too. |
+| D16 | Local mode ignores `X-Client-Id` and stores don't scope. Isolation applies in cloud mode only. | Existing local chunks lack `client_id` and files live at `uploads/{file_id}.*`; scoping would hide them. Local mode is single-user. |
 
 ## Configuration (`app/core/config.py`)
 
@@ -149,35 +150,50 @@ A frozen `Settings` dataclass built from `os.environ` by a cached `get_settings(
 - With `LLM_PROVIDER=vertex`, both model vars, `GOOGLE_CLOUD_PROJECT` and local ADC, Q&A, quiz and flashcards work against a **fresh** `CHROMA_DIR`. Vertex and nomic vectors have different dimensions and must never share a collection.
 - `docker build` succeeds, and the container answers `/health` on `$PORT`.
 
-## M2b: Cloud backends and isolation (to be detailed before start)
+## M2b: Cloud backends and isolation
 
-Requirements from the brief, plus the decisions above:
+Designed and approved 2026-10-12.
 
-- **Storage** (`app/services/storage.py`): `save_bytes`, `read_text`, `exists`, `delete`, `list_prefix`, with `LocalStorage` (`UPLOAD_DIR`) and `GCSStorage` (`GCS_BUCKET`). `DocumentService` stops using `Path`/`open()` for persisted files. Extraction may still use a request-local temp file. Keys are `{client_id}/{file_id}…`. `utils/file_utils.py` is currently empty. Blocking SDK calls run through `asyncio.to_thread` (D8).
+- **Request context (D5, D16):**
+  - `app/core/request_context.py` holds `client_id` and `request_id` in `ContextVar`s. An async FastAPI dependency on the `files`, `qa`, `quiz` and `flashcards` routers sets them. `/` and `/health` stay open.
+  - In cloud mode, `X-Client-Id` must be a UUID, otherwise the request gets a 400.
+  - **D16: local mode ignores the header and stores don't scope**, so existing `chroma_db/` chunks (which have no `client_id`) and `uploads/{file_id}.*` files keep working unchanged.
+  - Stores call `scope_client_id()`. It returns `None` in local mode, and in cloud mode it raises `IsolationError` when no client is bound (fail closed).
+  - A `# TODO` notes Firebase Auth or IAP as the replacement.
+- **Storage:** `app/services/storage.py` defines async `save_bytes`, `read_text`, `exists`, `delete`, `list_prefix` and `info` (size and updated time).
+  - Backends: `LocalStorage(UPLOAD_DIR)` and `GCSStorage(GCS_BUCKET)`. Blocking I/O runs through `asyncio.to_thread`.
+  - `DocumentService` extracts text from a request-local temp file, then saves `{file_id}{ext}` and `{file_id}_extracted.txt` through storage. Keys get a `{client_id}/` prefix in cloud mode.
+  - `file_id` values must match `[A-Za-z0-9_-]+`.
+  - `delete_file` now also removes `_extracted.txt`. This is a bug fix: the old `{file_id}.*` glob missed it.
 - **pgvector:**
-  - `PGVector(embeddings=get_embeddings(), collection_name="documents", connection=DATABASE_URL, use_jsonb=True)`.
-  - Get-by-file and stats use SQLAlchemy over `langchain_pg_embedding` filtered on `cmetadata`. Delete uses `PGVector.delete(ids=…)`.
-  - `VectorStoreService` public methods keep their signatures. Chroma is unchanged.
-  - Add a comment that one collection must never mix embedding models.
-  - Scores are normalized per D12, using the cosine-distance formula.
+  - `VectorStoreService` gains a Chroma backend and a PGVector backend (`collection_name="documents"`, `use_jsonb=True`, sharing one SQLAlchemy engine), keeping unit-normalized embeddings.
+  - PGVector cosine distance converts to relevance as `clamp(1 - d)`.
+  - Get-by-file and stats use a SQL query on `langchain_pg_embedding` joined to `langchain_pg_collection`, filtered on `cmetadata ->> key`.
+  - In cloud mode, `add_documents` writes `client_id` into every metadata, and every search, get, delete and stats call adds a `client_id` filter (Chroma uses `$and` for multiple keys).
+  - Every backend call goes through `asyncio.to_thread`. Public method signatures are unchanged.
 - **Sessions:**
-  - A `SessionStore` interface, with an in-memory implementation (default) and a Postgres implementation: a `sessions` table with `id`, `client_id`, `kind` (qa/quiz/quiz_def), `data` JSONB, `created_at`, `updated_at`. Selected by `SESSION_BACKEND`.
-  - All session CRUD in `qa_service` and `quiz_service` goes through it, scoped by `client_id`. That includes `active_quizzes`, so a quiz generated on one instance can be submitted on another.
-  - The list endpoints return only the caller's sessions.
-- **Isolation (D5, D6, D8):**
-  - The `X-Client-Id` dependency is applied to all routers and validates a UUID. Cloud mode returns 400 when the header is missing. Local mode defaults to `"local"`.
-  - `client_id` goes into chunk metadata at ingest. Every search, get and delete filters on `client_id` (plus `file_id` where applicable).
-  - Add a TODO noting Firebase Auth or IAP as the next step.
+  - `app/services/session_store.py` defines `SessionStore` with async `get`, `put`, `delete` and `list`, keyed by `(scope client, kind, id)` with kinds `qa`, `quiz` and `quiz_def`.
+  - `MemorySessionStore` keeps the objects themselves, like the dicts it replaces, with one store per service as today.
+  - `PostgresSessionStore` uses one table, `sessions(client_id, kind, id, data JSONB, created_at, updated_at)`, created at startup if missing, with a shared engine per URL. It serializes with `model_dump(mode="json")` and restores through a kind→model map.
+  - QA and quiz services load, mutate and save: QA after `ask_question` and `submit_reflection`; quiz on generate, create and submit. Concurrent writes to one session are last-write-wins.
+  - `test_quiz.py` seeds sessions through the store instead of the dicts. Its assertions are unchanged.
 - **Cost guardrails (D13, cloud mode only):**
-  - Upload size is checked before extraction, and over `MAX_UPLOAD_MB` returns 413.
-  - Chunk count is checked after chunking and before any embedding call, and over `MAX_CHUNKS_PER_DOC` returns 413. Nothing is stored for a rejected file.
-  - Rate limit: an in-memory sliding window per `client_id` per instance on LLM-calling routes (QA ask/reflect, quiz generate/submit, flashcards generate, and upload with embedding). Over the limit returns 429 with `Retry-After`.
-  - Tests cover each limit, and confirm local mode is unaffected.
-- **Frontend:** `frontend/lib/api.ts` generates a UUID once, keeps it in `localStorage`, and sends `X-Client-Id` on every request, including `uploadFile`.
+  - `MAX_UPLOAD_MB` (20) is checked before extraction and returns 413.
+  - `MAX_CHUNKS_PER_DOC` (500) is checked in the pipeline after chunking and before embedding. It returns 413 and the stored files are deleted.
+  - `RATE_LIMIT_PER_MIN` (20) is a sliding window per client per instance, returning 429 with `Retry-After`. It covers QA ask and reflect, quiz generate and submit, flashcards generate, uploads that embed, `/files/search` and `/files/stats`.
+- **Config:**
+  - New variables: `VECTOR_BACKEND`, `DATABASE_URL`, `STORAGE_BACKEND`, `GCS_BUCKET`, `SESSION_BACKEND` and the three limits.
+  - `Settings.cloud_mode` is true when any cloud backend is selected.
+  - `get_settings()` also fails with a hint to run `uv sync --extra cloud` when a selected backend's packages are missing.
+  - `CORS_ORIGINS` containing only separators is an error.
+  - The `cloud` extra adds `langchain-postgres`, `psycopg[binary]` and `google-cloud-storage`.
+- **Frontend:**
+  - `frontend/lib/api.ts` adds `getClientId()`, which creates a `crypto.randomUUID()` once and keeps it in `localStorage`. It sends `X-Client-Id` on both `fetch` calls.
+  - The header merge order in `request()` is fixed so callers' options can't drop the header.
 - **Tests:**
-  - Storage interface (local implementation, GCS mocked).
-  - Isolation through the HTTP layer: client A cannot search, read, or delete client B's file, and gets a 404 for it. One case exercises a code path that runs in a worker thread via `asyncio.to_thread`.
-  - Session scoping.
+  - Unit tests: storage (local, plus GCS against a fake client), config, guardrails (including local mode unaffected), memory sessions, and context propagation into `asyncio.to_thread`.
+  - HTTP isolation tests in cloud mode: client A's file and sessions are invisible to client B, who gets the same response as for a nonexistent id. A missing or invalid header gets a 400.
+  - `postgres`-marked tests (pgvector store, Postgres sessions) run when `TEST_DATABASE_URL` is set. A CI job runs them against a `pgvector/pgvector:pg16` service.
 - **README:** a "Deploying to Google Cloud" section with every env var and MJ's manual gcloud steps, documented only.
 - **Then stop.** MJ deploys and verifies acceptance criteria 2–4 before M3.
 
