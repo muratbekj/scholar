@@ -5,10 +5,11 @@ local setup: Ollama for the LLM and embeddings, Chroma on local disk.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import List, Mapping, Optional, Tuple
+from typing import Callable, List, Mapping, Optional, Tuple
 
 DEFAULT_CORS_ORIGINS: Tuple[str, ...] = (
     "http://localhost:3000",
@@ -18,6 +19,9 @@ DEFAULT_CORS_ORIGINS: Tuple[str, ...] = (
     "null",  # Electron file:// requests
 )
 LLM_PROVIDERS = ("ollama", "vertex")
+VECTOR_BACKENDS = ("chroma", "pgvector")
+STORAGE_BACKENDS = ("local", "gcs")
+SESSION_BACKENDS = ("memory", "postgres")
 # The google-genai SDK silently switches from Vertex/ADC to API-key mode when these are set.
 API_KEY_VARS = ("GOOGLE_API_KEY", "GEMINI_API_KEY")
 
@@ -39,6 +43,24 @@ class Settings:
     upload_dir: str = "uploads"
     chroma_dir: str = "./chroma_db"
     cors_origins: Tuple[str, ...] = DEFAULT_CORS_ORIGINS
+    vector_backend: str = "chroma"
+    database_url: Optional[str] = None
+    storage_backend: str = "local"
+    gcs_bucket: Optional[str] = None
+    session_backend: str = "memory"
+    max_upload_mb: int = 20
+    max_chunks_per_doc: int = 500
+    rate_limit_per_min: int = 20
+
+    @property
+    def cloud_mode(self) -> bool:
+        """True when any cloud backend is selected: X-Client-Id becomes required and data is isolated per client."""
+        return (
+            self.llm_provider == "vertex"
+            or self.vector_backend == "pgvector"
+            or self.storage_backend == "gcs"
+            or self.session_backend == "postgres"
+        )
 
     @property
     def llm_model(self) -> str:
@@ -56,9 +78,32 @@ class Settings:
 
         problems: List[str] = []
 
-        provider = (get("LLM_PROVIDER") or "ollama").lower()
-        if provider not in LLM_PROVIDERS:
-            problems.append(f"LLM_PROVIDER must be one of {', '.join(LLM_PROVIDERS)}, got {provider!r}")
+        def choice(name: str, options: Tuple[str, ...], default: str) -> str:
+            value = (get(name) or default).lower()
+            if value not in options:
+                problems.append(f"{name} must be one of {', '.join(options)}, got {value!r}")
+            return value
+
+        def positive_int(name: str, default: int) -> int:
+            raw = get(name)
+            if raw is None:
+                return default
+            try:
+                value = int(raw)
+            except ValueError:
+                value = 0
+            if value <= 0:
+                problems.append(f"{name} must be a positive integer, got {raw!r}")
+                return default
+            return value
+
+        provider = choice("LLM_PROVIDER", LLM_PROVIDERS, "ollama")
+        vector_backend = choice("VECTOR_BACKEND", VECTOR_BACKENDS, "chroma")
+        storage_backend = choice("STORAGE_BACKEND", STORAGE_BACKENDS, "local")
+        session_backend = choice("SESSION_BACKEND", SESSION_BACKENDS, "memory")
+        max_upload_mb = positive_int("MAX_UPLOAD_MB", cls.max_upload_mb)
+        max_chunks_per_doc = positive_int("MAX_CHUNKS_PER_DOC", cls.max_chunks_per_doc)
+        rate_limit_per_min = positive_int("RATE_LIMIT_PER_MIN", cls.rate_limit_per_min)
 
         thinking_budget: Optional[int] = None
         raw_budget = get("VERTEX_THINKING_BUDGET")
@@ -75,6 +120,13 @@ class Settings:
             cors_origins = tuple(origin.strip() for origin in raw_cors.split(",") if origin.strip())
             if "*" in cors_origins:
                 problems.append("CORS_ORIGINS must not contain '*'; list the allowed origins explicitly")
+            if not cors_origins:
+                problems.append("CORS_ORIGINS is set but lists no origins")
+
+        if (vector_backend == "pgvector" or session_backend == "postgres") and get("DATABASE_URL") is None:
+            problems.append("DATABASE_URL is required when VECTOR_BACKEND=pgvector or SESSION_BACKEND=postgres")
+        if storage_backend == "gcs" and get("GCS_BUCKET") is None:
+            problems.append("GCS_BUCKET is required when STORAGE_BACKEND=gcs")
 
         if provider == "vertex":
             for name in ("VERTEX_LLM_MODEL", "VERTEX_EMBED_MODEL", "GOOGLE_CLOUD_PROJECT"):
@@ -102,10 +154,49 @@ class Settings:
             upload_dir=get("UPLOAD_DIR") or cls.upload_dir,
             chroma_dir=get("CHROMA_DIR") or cls.chroma_dir,
             cors_origins=cors_origins,
+            vector_backend=vector_backend,
+            database_url=get("DATABASE_URL"),
+            storage_backend=storage_backend,
+            gcs_bucket=get("GCS_BUCKET"),
+            session_backend=session_backend,
+            max_upload_mb=max_upload_mb,
+            max_chunks_per_doc=max_chunks_per_doc,
+            rate_limit_per_min=rate_limit_per_min,
         )
+
+
+def _module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ModuleNotFoundError:  # a parent package (e.g. "google") is missing
+        return False
+
+
+def missing_cloud_packages(
+    settings: Settings, module_available: Optional[Callable[[str], bool]] = None
+) -> List[str]:
+    """Problems for selected cloud backends whose packages (the `cloud` extra) aren't installed."""
+    available = module_available or _module_available
+    needed: List[str] = []
+    if settings.llm_provider == "vertex":
+        needed.append("langchain_google_genai")
+    if settings.vector_backend == "pgvector":
+        needed += ["langchain_postgres", "psycopg"]
+    if settings.session_backend == "postgres":
+        needed.append("psycopg")
+    if settings.storage_backend == "gcs":
+        needed.append("google.cloud.storage")
+    missing = sorted({name for name in needed if not available(name)})
+    if not missing:
+        return []
+    return [f"missing packages {', '.join(missing)}: install the cloud extra with `uv sync --extra cloud`"]
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Settings for this process, read from os.environ once. Raises ConfigError."""
-    return Settings.from_env(os.environ)
+    settings = Settings.from_env(os.environ)
+    problems = missing_cloud_packages(settings)
+    if problems:
+        raise ConfigError("Invalid configuration:\n" + "\n".join(f"  - {p}" for p in problems))
+    return settings

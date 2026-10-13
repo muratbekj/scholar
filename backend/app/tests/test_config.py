@@ -93,3 +93,86 @@ def test_all_problems_reported_together():
     msg = str(exc.value)
     for fragment in ("VERTEX_LLM_MODEL", "CORS_ORIGINS", "VERTEX_THINKING_BUDGET"):
         assert fragment in msg
+
+
+# --- M2b: cloud backends, limits, cloud-extra check ---------------------------------
+
+from app.core import config as config_mod
+from app.core.config import missing_cloud_packages
+
+DB = "postgresql+psycopg://u:p@h/db"
+
+
+def test_cloud_backends_default_to_local():
+    s = Settings.from_env({})
+    assert (s.vector_backend, s.storage_backend, s.session_backend) == ("chroma", "local", "memory")
+    assert s.cloud_mode is False
+    assert (s.max_upload_mb, s.max_chunks_per_doc, s.rate_limit_per_min) == (20, 500, 20)
+
+
+@pytest.mark.parametrize("env", [
+    {"VECTOR_BACKEND": "pgvector", "DATABASE_URL": DB},
+    {"STORAGE_BACKEND": "gcs", "GCS_BUCKET": "b"},
+    {"SESSION_BACKEND": "postgres", "DATABASE_URL": DB},
+    VERTEX_OK,
+])
+def test_any_cloud_backend_enables_cloud_mode(env):
+    assert Settings.from_env(env).cloud_mode is True
+
+
+def test_postgres_backends_require_database_url():
+    with pytest.raises(ConfigError, match="DATABASE_URL"):
+        Settings.from_env({"VECTOR_BACKEND": "pgvector", "SESSION_BACKEND": "postgres"})
+
+
+def test_gcs_requires_bucket():
+    with pytest.raises(ConfigError, match="GCS_BUCKET"):
+        Settings.from_env({"STORAGE_BACKEND": "gcs"})
+
+
+def test_unknown_backend_values_rejected():
+    with pytest.raises(ConfigError) as exc:
+        Settings.from_env({"VECTOR_BACKEND": "faiss", "STORAGE_BACKEND": "s3", "SESSION_BACKEND": "redis"})
+    for name in ("VECTOR_BACKEND", "STORAGE_BACKEND", "SESSION_BACKEND"):
+        assert name in str(exc.value)
+
+
+@pytest.mark.parametrize("value", ["0", "-5", "abc"])
+def test_limits_must_be_positive_integers(value):
+    with pytest.raises(ConfigError, match="MAX_UPLOAD_MB"):
+        Settings.from_env({"MAX_UPLOAD_MB": value})
+
+
+def test_limits_parsed():
+    s = Settings.from_env({"MAX_UPLOAD_MB": "5", "MAX_CHUNKS_PER_DOC": "50", "RATE_LIMIT_PER_MIN": "3"})
+    assert (s.max_upload_mb, s.max_chunks_per_doc, s.rate_limit_per_min) == (5, 50, 3)
+
+
+def test_separator_only_cors_is_config_error():
+    with pytest.raises(ConfigError, match="CORS_ORIGINS"):
+        Settings.from_env({"CORS_ORIGINS": " , ,"})
+
+
+def test_missing_cloud_packages_reported_with_install_hint():
+    s = Settings.from_env({**VERTEX_OK, "STORAGE_BACKEND": "gcs", "GCS_BUCKET": "b"})
+    problems = missing_cloud_packages(s, module_available=lambda name: False)
+    assert len(problems) == 1
+    assert "uv sync --extra cloud" in problems[0]
+    assert "google.cloud.storage" in problems[0] and "langchain_google_genai" in problems[0]
+
+
+def test_local_settings_need_no_cloud_packages():
+    assert missing_cloud_packages(Settings.from_env({}), module_available=lambda name: False) == []
+
+
+def test_get_settings_fails_when_cloud_packages_missing(monkeypatch):
+    monkeypatch.setenv("STORAGE_BACKEND", "gcs")
+    monkeypatch.setenv("GCS_BUCKET", "b")
+    monkeypatch.setattr(config_mod, "_module_available", lambda name: False)
+    config_mod.get_settings.cache_clear()
+    try:
+        with pytest.raises(ConfigError, match="uv sync --extra cloud"):
+            config_mod.get_settings()
+    finally:
+        monkeypatch.undo()
+        config_mod.get_settings.cache_clear()
