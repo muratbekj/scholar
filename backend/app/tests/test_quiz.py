@@ -65,11 +65,11 @@ class TestQuizService:
         """Test creating a quiz session"""
         # Create a mock quiz
         quiz_id = "test-quiz-123"
-        quiz_service.active_quizzes[quiz_id] = Mock(
+        await quiz_service.sessions.put("quiz_def", quiz_id, Mock(
             quiz_id=quiz_id,
             questions=sample_questions,
             total_points=2
-        )
+        ))
         
         session_data = QuizSessionCreate(
             quiz_id=quiz_id,
@@ -95,7 +95,7 @@ class TestQuizService:
         mock_quiz.questions = sample_questions
         mock_quiz.total_points = 2
         mock_quiz.total_questions = 2
-        quiz_service.active_quizzes[quiz_id] = mock_quiz
+        await quiz_service.sessions.put("quiz_def", quiz_id, mock_quiz)
         
         # Create a session
         session_id = "test-session-123"
@@ -104,7 +104,7 @@ class TestQuizService:
         mock_session.quiz_id = quiz_id
         mock_session.started_at = datetime.now()
         mock_session.is_completed = False
-        quiz_service.active_sessions[session_id] = mock_session
+        await quiz_service.sessions.put("quiz", session_id, mock_session)
         
         # Submit answers
         submission = QuizSubmission(
@@ -140,7 +140,7 @@ class TestQuizService:
         )
 
         response = await quiz_service.generate_quiz(request)
-        quiz = quiz_service.active_quizzes[response.quiz_id]
+        quiz = await quiz_service.sessions.get("quiz_def", response.quiz_id)
 
         assert response.mode == QuizMode.REASONING_GAP
         assert quiz.questions[0].mode == QuizMode.REASONING_GAP

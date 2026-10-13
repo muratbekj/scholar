@@ -128,8 +128,8 @@ async def health_check():
         return {
             "status": "healthy",
             "service": "quiz-generation",
-            "active_quizzes": len(quiz_service.active_quizzes),
-            "active_sessions": len(quiz_service.active_sessions),
+            "active_quizzes": len(await quiz_service.sessions.list("quiz_def")),
+            "active_sessions": len(await quiz_service.sessions.list("quiz")),
             "llm_integration": "enabled" if quiz_service.use_llm else "disabled",
         }
     except Exception as exc:

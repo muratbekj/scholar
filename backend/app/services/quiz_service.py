@@ -24,6 +24,7 @@ from ..models.quiz import (
 )
 from ..models.study import EvidenceRef, GapStep, QuizMode
 from .document import DocumentService, document_service as shared_document_service
+from .session_store import SessionStore, build_session_store
 from .llm_service import llm_service
 
 logger = logging.getLogger(__name__)
@@ -63,10 +64,10 @@ class QuizService:
                 lines.append(f"{step.order}. {step.prompt}{hint}")
         return lines
 
-    def __init__(self, document_service: DocumentService = None, use_llm: bool = True):
+    def __init__(self, document_service: DocumentService = None, use_llm: bool = True,
+                 sessions: Optional[SessionStore] = None):
         self.document_service = document_service or shared_document_service
-        self.active_quizzes: Dict[str, Quiz] = {}
-        self.active_sessions: Dict[str, QuizSession] = {}
+        self.sessions = sessions or build_session_store()
         self.use_llm = use_llm
         logger.info("Initialized Quiz Service with mode-aware generation")
 
@@ -101,7 +102,7 @@ class QuizService:
             estimated_time=request.estimated_time or self._estimate_quiz_time(len(questions), request.difficulty),
             created_at=datetime.now(),
         )
-        self.active_quizzes[quiz_id] = quiz
+        await self.sessions.put("quiz_def", quiz_id, quiz)
 
         processing_time = (datetime.now() - start_time).total_seconds()
         return QuizResponse(
@@ -120,7 +121,7 @@ class QuizService:
         )
 
     async def create_session(self, session_data: QuizSessionCreate) -> QuizSessionResponse:
-        if session_data.quiz_id not in self.active_quizzes:
+        if await self.sessions.get("quiz_def", session_data.quiz_id) is None:
             raise ValueError(f"Quiz {session_data.quiz_id} not found")
 
         session_id = str(uuid.uuid4())
@@ -131,7 +132,7 @@ class QuizService:
             filename=session_data.filename,
             started_at=datetime.now(),
         )
-        self.active_sessions[session_id] = session
+        await self.sessions.put("quiz", session_id, session)
         return QuizSessionResponse(
             session_id=session_id,
             quiz_id=session_data.quiz_id,
@@ -142,7 +143,8 @@ class QuizService:
         )
 
     async def get_quiz_questions(self, quiz_id: str) -> List[QuizQuestionResponse]:
-        if quiz_id not in self.active_quizzes:
+        quiz = await self.sessions.get("quiz_def", quiz_id)
+        if quiz is None:
             raise ValueError(f"Quiz {quiz_id} not found")
 
         return [
@@ -161,20 +163,18 @@ class QuizService:
                 gap_steps=question.gap_steps,
                 grading_rubric=question.grading_rubric,
             )
-            for question in self.active_quizzes[quiz_id].questions
+            for question in quiz.questions
         ]
 
     async def submit_quiz(self, submission: QuizSubmission) -> QuizResult:
-        if submission.session_id not in self.active_sessions:
+        session = await self.sessions.get("quiz", submission.session_id)
+        if session is None:
             raise ValueError(f"Session {submission.session_id} not found")
-
-        session = self.active_sessions[submission.session_id]
         if session.is_completed:
             raise ValueError("Quiz session already completed")
-        if session.quiz_id not in self.active_quizzes:
+        quiz = await self.sessions.get("quiz_def", session.quiz_id)
+        if quiz is None:
             raise ValueError(f"Quiz {session.quiz_id} not found")
-
-        quiz = self.active_quizzes[session.quiz_id]
         result = await self._calculate_results(quiz, submission.answers)
         result.session_id = submission.session_id
         result.time_taken = (datetime.now() - session.started_at).total_seconds()
@@ -186,10 +186,11 @@ class QuizService:
         session.total_possible_points = result.total_possible_points
         session.time_taken = result.time_taken
         session.is_completed = True
+        await self.sessions.put("quiz", submission.session_id, session)
         return result
 
     async def get_session(self, session_id: str) -> Optional[QuizSession]:
-        return self.active_sessions.get(session_id)
+        return await self.sessions.get("quiz", session_id)
 
     async def get_all_sessions(self) -> List[QuizSessionResponse]:
         return [
@@ -203,14 +204,11 @@ class QuizService:
                 score=session.score,
                 time_taken=session.time_taken,
             )
-            for session in self.active_sessions.values()
+            for session in await self.sessions.list("quiz")
         ]
 
     async def delete_session(self, session_id: str) -> bool:
-        if session_id in self.active_sessions:
-            del self.active_sessions[session_id]
-            return True
-        return False
+        return await self.sessions.delete("quiz", session_id)
 
     async def _get_document_content(self, file_id: str) -> str:
         full_text = self.document_service.get_extracted_text(file_id)

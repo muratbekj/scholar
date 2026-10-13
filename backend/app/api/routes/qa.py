@@ -115,7 +115,7 @@ async def health_check():
         return {
             "status": "healthy",
             "service": "qa-with-rag",
-            "active_sessions": len(qa_service.active_sessions),
+            "active_sessions": len(await qa_service.sessions.list("qa")),
             "rag_integration": "enabled",
         }
     except Exception as exc:
