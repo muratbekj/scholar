@@ -6,9 +6,10 @@ try:
 except ConfigError as exc:
     raise SystemExit(str(exc)) from None
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .api.routes import files, qa, quiz, flashcards
+from .core.request_context import client_context
 
 app = FastAPI(
     title="Scholar Backend API",
@@ -25,11 +26,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(files.router)
-app.include_router(qa.router)
-app.include_router(quiz.router)
-app.include_router(flashcards.router)
+# Include routers. Every data route binds the caller's client id (X-Client-Id in cloud mode);
+# / and /health stay open for health checks.
+for router in (files.router, qa.router, quiz.router, flashcards.router):
+    app.include_router(router, dependencies=[Depends(client_context)])
 
 @app.get("/")
 async def root():

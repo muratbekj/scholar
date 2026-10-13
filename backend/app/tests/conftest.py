@@ -30,3 +30,15 @@ os.environ["UPLOAD_DIR"] = os.path.join(_data_dir, "uploads")
 from app.core.config import get_settings  # noqa: E402
 
 get_settings.cache_clear()
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _reset_request_context():
+    """Tests bind client ids directly; don't let one leak into the next test."""
+    yield
+    from app.core import request_context
+
+    request_context.bind(None, None)
