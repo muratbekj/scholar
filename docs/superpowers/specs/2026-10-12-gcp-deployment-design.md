@@ -35,6 +35,7 @@ Scope: `backend/`, plus one change in `frontend/lib/api.ts` (the client id heade
 | D12 | `VectorStoreService` always returns `similarity_score` as a 0–1 relevance score where higher is better, on both backends. Done in M2a as its own commit, labeled as a bug fix that **changes local output**. | Existing bug: Chroma returns a distance (lower = better), but `qa_service` treats the value as relevance in `_source_match_percent`, the heuristic grounding check (`similarity * 0.5`), `_score_band`, evidence-ref scores and `_calculate_confidence_score`. |
 | D13 | Cloud-mode cost guardrails: maximum upload size, maximum chunks per document, and a per-`client_id` rate limit on LLM-calling routes. They return 413, 413 and 429. Enforced only in cloud mode, so local behavior stays unchanged. | Bounds Vertex spend from a single client or file on a public URL. |
 | D14 | In M4, groundedness is scored by the separate judge model, not the app's critic. Critic-vs-judge agreement on per-sentence support labels is reported as its own metric. | The critic shouldn't grade itself. The agreement number measures how much the in-app critic can be trusted. |
+| D15 | `GOOGLE_CLOUD_LOCATION` defaults to `global`, not `us-central1`. | Verified 2026-10-12: gemini-3.x models return 404 from `us-central1` and work from `global`; gemini-embedding-001 works from `global` too. |
 
 ## Configuration (`app/core/config.py`)
 
@@ -49,7 +50,7 @@ A frozen `Settings` dataclass built from `os.environ` by a cached `get_settings(
 | `VERTEX_EMBED_MODEL` | none | M2a | required when vertex (D3) |
 | `VERTEX_THINKING_BUDGET` | unset | M2a | optional int, passed only when set (D11) |
 | `GOOGLE_CLOUD_PROJECT` | none | M2a | required when vertex |
-| `GOOGLE_CLOUD_LOCATION` | `us-central1` | M2a | |
+| `GOOGLE_CLOUD_LOCATION` | `global` | M2a | Vertex model location (D15); independent of the Cloud Run region |
 | `UPLOAD_DIR` | `uploads` | M2a | local storage |
 | `CHROMA_DIR` | `./chroma_db` | M2a | chroma backend |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:3001,http://127.0.0.1:3000,http://127.0.0.1:3001,null` | M2a | comma separated; `*` rejected (D10) |

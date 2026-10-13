@@ -35,7 +35,7 @@ class Settings:
     vertex_embed_model: Optional[str] = None
     vertex_thinking_budget: Optional[int] = None
     google_cloud_project: Optional[str] = None
-    google_cloud_location: str = "us-central1"
+    google_cloud_location: str = "global"  # Gemini 3.x models are served only from global
     upload_dir: str = "uploads"
     chroma_dir: str = "./chroma_db"
     cors_origins: Tuple[str, ...] = DEFAULT_CORS_ORIGINS
